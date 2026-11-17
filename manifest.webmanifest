@@ -1,0 +1,11 @@
+{
+  "name": "VolleyScout Pro",
+  "short_name": "VolleyScout",
+  "description": "Scouting video per la pallavolo, compatibile DataVolley",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1720",
+  "theme_color": "#0f1720",
+  "lang": "it",
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

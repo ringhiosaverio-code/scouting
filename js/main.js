@@ -11,6 +11,7 @@ import { createSetup } from './ui/setup.js';
 import { createReport } from './ui/report.js';
 import { createPlaylist } from './ui/playlist.js';
 import { createSettings } from './ui/settings.js';
+import { createAuto } from './ui/auto.js';
 import { SKILLS, DEFAULT_SETTINGS } from './lib/constants.js';
 
 const app = {
@@ -92,6 +93,7 @@ function mountModules() {
   modules.report = createReport(app);
   modules.playlist = createPlaylist(app);
   modules.settings = createSettings(app);
+  modules.auto = createAuto(app);
   for (const [k, m] of Object.entries(modules)) $(`#tab-${k}`).appendChild(m.el);
 }
 app.showTab = (t) => {
@@ -100,6 +102,7 @@ app.showTab = (t) => {
   for (const s of $$('main > section')) s.classList.toggle('active', s.id === `tab-${t}`);
   // il video vive nella scheda in cui serve
   if (t === 'playlist') modules.playlist.attachVideo();
+  else if (t === 'auto') modules.auto.attachVideo();
   else if (t === 'scout') { modules.scout.el.querySelector('.video-wrap').prepend(app.video); app.video.controls = false; }
   renderActive();
 };
@@ -313,7 +316,7 @@ document.addEventListener('keydown', (ev) => {
 
 // ---------- avvio ----------
 function init() {
-  const tabs = [['setup', 'Partita'], ['scout', 'Scouting'], ['report', 'Report'], ['playlist', 'Video analisi'], ['settings', 'Impostazioni']];
+  const tabs = [['setup', 'Partita'], ['scout', 'Scouting'], ['report', 'Report'], ['auto', 'Analisi auto'], ['playlist', 'Video analisi'], ['settings', 'Impostazioni']];
   const nav = $('.tabs');
   for (const [k, l] of tabs) nav.append(h('button', { role: 'tab', 'data-tab': k, 'aria-selected': 'false', onclick: () => app.showTab(k) }, l));
   $('#btn-new').onclick = newMatchFlow;

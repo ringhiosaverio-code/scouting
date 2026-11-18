@@ -1,10 +1,11 @@
 // Service worker: rende l'app utilizzabile offline (es. palazzetti senza rete).
-const CACHE = 'vsp-v1';
+const CACHE = 'vsp-v2';
 const FILES = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg', 'samples/esempio.dvw',
   'js/main.js', 'js/lib/constants.js', 'js/lib/court.js', 'js/lib/codes.js', 'js/lib/engine.js', 'js/lib/predict.js',
   'js/lib/stats.js', 'js/lib/validate.js', 'js/lib/dvw.js', 'js/lib/store.js',
-  'js/ui/dom.js', 'js/ui/courtsvg.js', 'js/ui/scout.js', 'js/ui/setup.js', 'js/ui/report.js', 'js/ui/playlist.js', 'js/ui/settings.js',
+  'js/ui/dom.js', 'js/ui/courtsvg.js', 'js/ui/scout.js', 'js/ui/setup.js', 'js/ui/report.js', 'js/ui/playlist.js', 'js/ui/settings.js', 'js/ui/auto.js',
+  'js/vision/cv.js', 'js/vision/tracker.js', 'js/vision/ballistic.js', 'js/vision/rally.js', 'js/vision/analyzer.js', 'js/vision/worker.js',
 ];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

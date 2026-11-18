@@ -19,6 +19,9 @@ export const REF_POINTS = [
   { id: 'cr', label: 'Linea centrale, destra', x: 3.5, y: 3.5 },
   { id: 'f3l', label: '3 m lontano, sinistra', x: 0.5, y: 4.5 },
   { id: 'f3r', label: '3 m lontano, destra', x: 3.5, y: 4.5 },
+  // punti in altezza: abilitano la ricostruzione 3D della palla (analisi automatica)
+  { id: 'ntl', label: 'Bordo superiore della rete, all\'antenna sinistra', x: 0.5, y: 3.5, net: true },
+  { id: 'ntr', label: 'Bordo superiore della rete, all\'antenna destra', x: 3.5, y: 3.5, net: true },
 ];
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -190,7 +193,7 @@ export function applyH(H, p) {
 
 // Calibrazione: { points: {id: {x,y}} } in coordinate immagine normalizzate (0..1)
 export function buildCalibration(points) {
-  const ids = REF_POINTS.filter((r) => points[r.id]);
+  const ids = REF_POINTS.filter((r) => points[r.id] && !r.net);
   if (ids.length < 4 || !REF_POINTS.filter((r) => r.required).every((r) => points[r.id])) return null;
   const src = ids.map((r) => points[r.id]);
   const dst = ids.map((r) => ({ x: r.x, y: r.y }));
@@ -211,3 +214,16 @@ export const COURT_LINES = [
 ];
 
 export const round2 = (v) => Math.round(v * 1000) / 1000;
+
+// Corrispondenze 3D (metri, Y=0 fondo vicino alla telecamera) -> immagine normalizzata,
+// per la calibrazione completa della telecamera (serve almeno un punto della rete).
+export function calibrationPairs3D(points, netHeight = 2.43) {
+  const p3 = [], p2 = [];
+  for (const r of REF_POINTS) {
+    const q = points[r.id];
+    if (!q) continue;
+    p3.push([(r.x - 0.5) * 3, (r.y - 0.5) * 3, r.net ? netHeight : 0]);
+    p2.push([q.x, q.y]);
+  }
+  return { p3, p2, has3D: REF_POINTS.some((r) => r.net && points[r.id]) };
+}

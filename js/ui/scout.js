@@ -216,7 +216,8 @@ export function createScout(app) {
     if (app.match.settings.clickSurface === 'court') setSurface('video');
     video.pause();
     const existing = Object.keys(app.match.calibration.points).length;
-    calib = { idx: existing >= 4 ? REF_POINTS.length : 0 };
+    const missing = REF_POINTS.findIndex((r) => !app.match.calibration.points[r.id]);
+    calib = { idx: existing >= 4 && missing >= 0 && REF_POINTS[missing].required ? missing : missing < 0 ? REF_POINTS.length : missing };
     updateCalibBanner();
     drawOverlay();
   }

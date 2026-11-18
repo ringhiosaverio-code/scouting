@@ -278,3 +278,23 @@ main > section.active { display: block; }
   .card { border-color: #bbb; break-inside: avoid; background: #fff; }
   :root { --line: #ccc; --muted: #555; --card2: #eee; --text: #000; }
 }
+
+/* ---------- analisi automatica ---------- */
+.overlay.passive { pointer-events: none; cursor: default; }
+.auto-path { fill: none; stroke: #ffd400; stroke-width: 2; stroke-dasharray: 4 3; opacity: 0.85; }
+.auto-ball { fill: none; stroke: #ffd400; stroke-width: 3; }
+.auto-touch { stroke: #fff; stroke-width: 2; }
+.auto-touch.near { fill: #3b8eea; } .auto-touch.far { fill: #e5534b; }
+.auto-label { fill: #fff; font: 600 13px system-ui, sans-serif; paint-order: stroke; stroke: #000; stroke-width: 3px; }
+.auto-landing { stroke: #ff3b30; stroke-width: 3; }
+.checklist { list-style: none; padding: 0; margin: 0 0 8px; }
+.checklist li::before { content: "✓ "; font-weight: 700; }
+.checklist li.ok::before { color: var(--ok); } .checklist li.bad::before { content: "✗ "; color: var(--bad); } .checklist li.warn::before { content: "! "; color: var(--warn); }
+.progress { height: 10px; background: var(--bg2); border-radius: 5px; overflow: hidden; margin: 8px 0 4px; }
+.progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+.auto-list .clips li.st-accepted { opacity: 0.6; }
+.auto-list .clips li.st-discarded { opacity: 0.4; text-decoration: line-through; }
+.auto-list { max-height: 40vh; overflow: auto; }
+.auto-desc { font-size: 12px; padding-left: 20px; margin: 6px 0; }
+.notes { padding-left: 4px; list-style: none; margin: 4px 0; font-size: 12px; }
+textarea.mono { width: 100%; font-family: var(--mono); }

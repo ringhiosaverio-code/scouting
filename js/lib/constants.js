@@ -178,6 +178,8 @@ export const DEFAULT_SETTINGS = {
   defaultEval: { S: '+', R: '+', E: '+', A: '+', B: '+', D: '+', F: '+' },
   defaultType: 'H',
   clickSurface: 'video', // 'video' | 'court'
+  netHeight: 2.43, // 2.43 maschile, 2.24 femminile
+  skipDeadTime: false,
   autoEndSet: true,
   zoneDisplay: true,
   language: 'it',

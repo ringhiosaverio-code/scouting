@@ -8,6 +8,7 @@ import { describe, skillCode, parseSkillCode, interpretTyped } from '../lib/code
 import { rankPlayers } from '../lib/predict.js';
 import { uid } from '../lib/engine.js';
 import { ATTACK_TABLE } from '../lib/constants.js';
+import { readJerseyAt } from '../vision/jersey.js';
 
 export function createAuto(app) {
   const root = h('div', { class: 'playlist-grid auto-grid' });
@@ -145,6 +146,51 @@ export function createAuto(app) {
     };
   }
   const tokenOf = (e) => (e.kind === 'skill' ? skillCode(e) : `${e.team}p`);
+
+  // ---------- lettura dei numeri di maglia (OCR, sperimentale) ----------
+  let ocrVideo = null;
+  async function readNumbers() {
+    const ra = rallies()[selIndex];
+    if (!ra || !proposal || !video.currentSrc) return;
+    if (!ocrVideo || ocrVideo.src !== video.currentSrc) {
+      ocrVideo = document.createElement('video');
+      ocrVideo.muted = true; ocrVideo.preload = 'auto'; ocrVideo.src = video.currentSrc;
+      await new Promise((r) => ocrVideo.addEventListener('loadeddata', r, { once: true }));
+    }
+    const skills = proposal.events.filter((e) => e.kind === 'skill');
+    const results = [];
+    toast('Lettura dei numeri di maglia…');
+    for (let k = 0; k < ra.touches.length && k < skills.length; k++) {
+      const tc = ra.touches[k], e = skills[k];
+      if (!tc.box) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
+      // il numero letto deve essere di un giocatore in campo (o del libero) di quella squadra
+      const cur = app.rp.current;
+      const valid = new Set([...(cur ? cur.pos[e.team] : []), ...app.match.teams[e.team].players.filter((p) => p.role === 'L').map((p) => Number(p.number))]);
+      const boxH = (tc.box[3] - tc.box[1]) * (ocrVideo.videoHeight || 0);
+      if (boxH < (app.match.settings.ocrMinPx || 90)) { results.push({ k, msg: 'giocatore troppo piccolo nell\'immagine' }); continue; }
+      let best = null;
+      // più istanti prima del contatto: il giocatore può essere girato o coperto
+      for (const dt of [-0.3, -0.15, 0]) {
+        let r = null;
+        try { r = await readJerseyAt(ocrVideo, Math.max(0, tc.t + dt), tc.box); } catch (err) { toast(err.message, 'error', 6000); return; }
+        if (r && r.text && valid.has(Number(r.text)) && (!best || r.conf > best.conf)) best = r;
+      }
+      // prudenza: una cifra persa ("11" letto "1") non deve sostituire una proposta compatibile
+      if (best && e.num != null && String(e.num).length > best.text.length && String(e.num).includes(best.text)) {
+        results.push({ k, msg: `letto "${best.text}", compatibile con #${e.num}: mantenuto` });
+        continue;
+      }
+      if (best && best.conf >= 55) {
+        const old = e.num;
+        e.num = Number(best.text);
+        e.auto = { ...(e.auto || {}), ocr: best.conf };
+        results.push({ k, msg: old === e.num ? `confermato #${e.num} (${best.conf}%)` : `letto #${e.num} (${best.conf}%), proposto era #${old}` });
+      } else results.push({ k, msg: 'numero non leggibile' });
+    }
+    proposal.text = proposal.events.map(tokenOf).join(' ');
+    proposal.ocr = results;
+    render();
+  }
   function buildProposal(i) {
     const ra = rallies()[i];
     const cur = app.rp.current;
@@ -294,11 +340,13 @@ export function createAuto(app) {
       h('h3', {}, `Scambio ${selIndex + 1} · ${fmtTime(ra.start)} · ${statusTxt}`),
       h('p', { class: 'muted small' }, `Affidabilità ${Math.round(proposal.conf * 100)}% · ${ra.touches.length} tocchi · ${ra.landing ? `atterraggio ${ra.landing.extrapolated ? 'stimato' : 'visto'}` : 'atterraggio non visto'} · ${ra.mode.toUpperCase()}`),
       proposal.notes.length ? h('ul', { class: 'notes' }, proposal.notes.map((n) => h('li', { class: 'warn' }, '⚠ ' + n))) : null,
+      proposal.ocr ? h('ul', { class: 'notes ocr-results' }, proposal.ocr.map((r) => h('li', {}, `Tocco ${r.k + 1}: ${r.msg}`))) : null,
       ta, descr,
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn primary', disabled: ra.status === 'accepted', onclick: () => accept() }, '✓ Accetta (Invio)'),
         h('button', { class: 'btn', onclick: () => discard() }, 'Scarta'),
         h('button', { class: 'btn', onclick: () => { proposal = buildProposal(selIndex); render(); } }, '↺ Ripristina'),
+        h('button', { class: 'btn', title: 'Sperimentale: legge i numeri sulle maglie dei giocatori che toccano (scarica il motore OCR al primo uso)', onclick: () => readNumbers() }, '🔢 Leggi numeri di maglia'),
         h('button', { class: 'btn', onclick: () => acceptAll() }, '⏩ Accetta in serie gli scambi sicuri')),
       h('p', { class: 'muted small' }, 'Puoi modificare i codici prima di accettare (sintassi DataVolley; *p / ap per il punto).'));
   }

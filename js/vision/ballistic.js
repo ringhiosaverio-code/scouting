@@ -163,6 +163,20 @@ export function segmentFlights(P, obs, opts = {}) {
     if (strong(A) && !strong(B)) refit(B, A, t);
     else if (strong(B) && !strong(A)) refit(A, B, t);
   }
+  // rifinitura dei bordi: i primi/ultimi punti di un volo possono appartenere al volo adiacente
+  for (const g of segs) {
+    if (!g.fit || g.fit.rms < (opts.trimRms ?? 1.2)) continue;
+    for (const side of ['start', 'end']) {
+      let best = null;
+      for (let k = 1; k <= 3; k++) {
+        const i = side === 'start' ? g.i + k : g.i, j = side === 'end' ? g.j - k : g.j;
+        if (j - i < minPts) break;
+        const f = fitFlight(P, obs.slice(i, j));
+        if (f && f.plausible && f.rms < g.fit.rms * 0.6 && f.rms < 1.0 && (!best || f.rms < best.f.rms)) best = { i, j, f };
+      }
+      if (best) { g.i = best.i; g.j = best.j; g.fit = best.f; g.t0 = obs[g.i].t; g.t1 = obs[g.j - 1].t; }
+    }
+  }
   // tiene solo i voli ben stimati (gli altri sono di solito punti spuri)
   const good = segs.filter((g) => g.fit && g.fit.plausible && g.fit.rms <= (opts.maxRms ?? 2.6) && g.j - g.i >= minPts);
   const weight = (g) => (g.j - g.i) * Math.max(0.05, g.t1 - g.t0) ** 2 / (0.3 + g.fit.rms);
@@ -184,6 +198,8 @@ export function segmentFlights(P, obs, opts = {}) {
     // continuità: due voli quasi identici = falso tocco (rumore)
     if (angle < (opts.minAngle ?? 12) && Math.abs(Math.hypot(...vin) - Math.hypot(...vout)) < 2) continue;
     if (X[2] < -0.6) continue; // contatto sotto il pavimento: stima incoerente
+    // rimbalzo: contatto a terra e la palla risale più lenta (perde energia);
+    // una ricezione/difesa bassa invece la rilancia in alto
     const bounce = X[2] < 0.25 || (X[2] < (opts.bounceZ ?? 0.45) && vin[2] < -1 && vout[2] > 0);
     if (bounce) {
       // punto di atterraggio dal volo in arrivo (più lungo e stabile): z = raggio della palla

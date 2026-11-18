@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node tools/server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "synth": "node tools/synth-video.mjs synth.webm synth.json"
+    "synth": "node tools/synth-video.mjs synth.webm synth.json",
+    "bench": "node tools/bench.mjs '{}' 6"
   },
   "license": "MIT"
 }

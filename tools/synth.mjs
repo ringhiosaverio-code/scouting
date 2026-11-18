@@ -3,6 +3,8 @@
 // traiettorie balistiche reali (gravità), rimbalzi a terra.
 // Usato dai test del modulo di analisi automatica e per produrre video di prova.
 
+import { DIGITS } from '../js/vision/digits.js';
+
 const G = -9.81;
 
 export function makeCamera(W = 640, H = 360) {
@@ -168,6 +170,16 @@ export function makeRenderer(cam) {
       const col = p.side === 'near' ? [30, 90, 220] : [210, 40, 40];
       fillRect(img, W, H, feet.x - hw, head.y, feet.x + hw, feet.y, col);
       fillRect(img, W, H, feet.x - hw * 0.6, head.y - hw * 0.9, feet.x + hw * 0.6, head.y, [230, 190, 160]);
+      // numero di maglia (bianco) sul busto, con font bitmap a scala intera
+      const sc = Math.max(1, Math.floor((feet.y - head.y) * 0.13 / 7));
+      const str = String(p.number);
+      let nx = Math.round(feet.x - (str.length * 6 - 1) * sc / 2);
+      const ny = Math.round(head.y + (feet.y - head.y) * 0.18);
+      for (const ch of str) {
+        const g = DIGITS[ch];
+        for (let gy = 0; gy < 7; gy++) for (let gx = 0; gx < 5; gx++) if (g[gy][gx] === '1') fillRect(img, W, H, nx + gx * sc, ny + gy * sc, nx + gx * sc + sc - 1, ny + gy * sc + sc - 1, [245, 245, 245]);
+        nx += 6 * sc;
+      }
     }
     if (ball) {
       const c = cam.project(ball);

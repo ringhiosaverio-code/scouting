@@ -54,6 +54,60 @@ palazzetti) e si può installare come applicazione dal browser.
 | Report | report partita | report + **side-out/break-point per rotazione**, attacco per qualità di ricezione, **distribuzione del palleggiatore** per rotazione, **mappe direzionali** filtrabili; stampa/PDF |
 | Video analisi | playlist | filtri (squadra, giocatore, fondamentale, valutazione, fase, combinazione, zone), riproduzione automatica delle clip, export elenco |
 | Export | DVW | DVW + **CSV** (Excel) + progetto JSON |
+| Analisi automatica | — | rilevamento di scambi e tocchi dal video con **ricostruzione 3D della palla**, codici proposti da rivedere, velocità della palla, lettura dei numeri di maglia (sperimentale), salto dei tempi morti |
+
+## Analisi automatica del video (scheda "Analisi auto")
+
+Il sistema guarda il video e **propone** gli scambi già codificati; lo scout li rivede
+e li accetta (anche in serie) o li corregge. Funziona così:
+
+1. **Sfondo e sagome**: mediana di fotogrammi sparsi → il campo senza giocatori;
+   per differenza si ottengono le sagome dei giocatori.
+2. **Palla**: piccoli oggetti compatti in movimento (differenza su tre fotogrammi),
+   collegati in tracce con predizione del moto; scartati bordi di giocatori,
+   numeri di maglia e oggetti fermi.
+3. **Ricostruzione 3D**: cliccando nella calibrazione anche i due estremi del
+   **bordo superiore della rete** (altezza nota) si ricava la matrice completa della
+   telecamera. Ogni volo della palla è una parabola 3D con gravità nota: un tocco è
+   il punto in cui un volo finisce e ne inizia un altro. Si ottengono così istante,
+   **posizione 3D del contatto**, altezza (tocco o rimbalzo a terra), **velocità**
+   (km/h di battute e attacchi) e il punto di atterraggio (dentro/fuori).
+4. **Interpretazione**: dalla sequenza dei tocchi per lato si ricavano fondamentali
+   (S, R, E, A, B, D, F), valutazioni (es. qualità della ricezione dalla distanza
+   dell'alzata dal punto ideale; esito dell'attacco dall'atterraggio o dalla difesa),
+   zone, tipo di battuta e combinazione d'attacco (dal tempo alzata→attacco), squadra
+   che vince il punto. I giocatori vengono dalla rotazione (battitore, palleggiatore)
+   e dal predittore per zona.
+5. **Numeri di maglia (sperimentale)**: per ogni tocco si ritaglia il busto del
+   giocatore, si isolano e normalizzano le cifre e le si legge con Tesseract.js
+   (scaricato dalla CDN al primo uso). Il numero letto sostituisce la proposta solo
+   se è di un giocatore in campo di quella squadra.
+
+Le incertezze vengono **segnalate** nella proposta: palla vicino alla linea, tocco o
+alzata non visti e quindi dedotti, atterraggio non visto, battitore incoerente con la
+rotazione. "Accetta in serie" si ferma al primo scambio con una segnalazione.
+L'opzione **"Salta i tempi morti"** usa gli scambi rilevati per saltare le pause
+durante lo scouting manuale.
+
+**Quanto è affidabile (misurato su video sintetici con verità nota)**
+`npm run bench` genera 6 video con 41 scambi (giocatori con numeri sulle maglie,
+battute da entrambi i lati, attacchi, difese, errori, ace):
+
+| | risultato |
+|---|---|
+| scambi trovati | ~95% |
+| squadra che vince il punto | ~90% |
+| sequenza dei fondamentali esatta | ~78% |
+| istante dei tocchi | entro 0,1 s |
+| posizione 3D dei tocchi | tipicamente entro 0,5 m (meno precisa sul fondo campo lontano) |
+| numeri di maglia (caratteri reali, cifre da 9 a 28 px, con sfocatura) | 48/48 nel test di lettura |
+
+Sono numeri su video **sintetici**: con riprese reali (luci, pubblico, palloni a
+bordo campo, telecamera mossa) l'accuratezza sarà inferiore e va misurata. Requisiti
+pratici: telecamera fissa dietro il fondo campo, rete calibrata, video ad almeno 720p
+(per i numeri di maglia servono giocatori grandi nell'immagine, quindi soprattutto
+quelli del lato vicino). Senza i punti della rete l'analisi funziona in modalità 2D,
+molto meno precisa: serve soprattutto a trovare gli scambi e i tempi morti.
 
 ## Come si usa
 
@@ -106,14 +160,20 @@ js/lib/                      logica pura (testata con node, senza DOM)
   stats.js, validate.js      statistiche e controllo dati
   dvw.js                     import/export DataVolley
   store.js                   salvataggio locale
-js/ui/                       schermate (scouting, partita, report, video analisi, impostazioni)
+js/ui/                       schermate (scouting, partita, report, analisi auto, video analisi, impostazioni)
+js/vision/                   analisi automatica: cv.js (sfondo, sagome, candidati palla), tracker.js,
+                             ballistic.js (camera 3D, voli balistici), rally.js (scambi → codici),
+                             jersey.js (numeri di maglia), analyzer.js + worker.js (browser)
+tools/                       server statico, generatore di video sintetici, banco di prova
 tests/                       test unitari (node --test) e test end-to-end (Playwright)
 ```
 
 ## Test
 
 ```bash
-npm test                                   # test unitari
+npm test                                   # test unitari (incluso l'analisi su video sintetico)
+npm run bench                              # banco di prova dell'analisi automatica (6 video sintetici)
+node tools/synth-video.mjs v.webm v.json   # crea un video sintetico di prova + verità (richiede ffmpeg)
 npm start & node tests/e2e/smoke.mjs http://localhost:8080/ video.mp4 /tmp   # end-to-end (richiede Playwright)
 ```
 

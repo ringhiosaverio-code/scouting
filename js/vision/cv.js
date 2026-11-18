@@ -56,7 +56,7 @@ export function denoise(m, w, h) {
 }
 
 // Componenti connesse (4-connessione, union-find). Restituisce blob con statistiche.
-export function components(m, w, h, minArea = 1) {
+export function components(m, w, h, minArea = 1, conn8 = false) {
   const lab = new Int32Array(m.length);
   const parent = [0];
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
@@ -65,11 +65,14 @@ export function components(m, w, h, minArea = 1) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (!m[i]) continue;
-      const l = x > 0 ? lab[i - 1] : 0;
-      const u = y > 0 ? lab[i - w] : 0;
-      if (l && u) { const a = find(l), b = find(u); lab[i] = Math.min(a, b); if (a !== b) parent[Math.max(a, b)] = Math.min(a, b); }
-      else if (l || u) lab[i] = l || u;
-      else { lab[i] = next; parent.push(next); next++; }
+      const nb = [x > 0 ? lab[i - 1] : 0, y > 0 ? lab[i - w] : 0];
+      if (conn8 && y > 0) { if (x > 0) nb.push(lab[i - w - 1]); if (x < w - 1) nb.push(lab[i - w + 1]); }
+      const ls = nb.filter(Boolean);
+      if (!ls.length) { lab[i] = next; parent.push(next); next++; continue; }
+      const roots = ls.map(find);
+      const r = Math.min(...roots);
+      lab[i] = r;
+      for (const q of roots) if (q !== r) parent[q] = r;
     }
   }
   const stats = new Map();

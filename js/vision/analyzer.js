@@ -61,8 +61,18 @@ export async function captureAndProcess(o) {
     if (useRVFC) {
       video.playbackRate = o.rate || 2;
       await new Promise((resolve, reject) => {
-        let lastT = -1;
+        let lastT = -1, lastPresented = null, seen = 0, missed = 0;
         const onFrame = (_, meta) => {
+          // velocità adattiva: se il browser salta fotogrammi (decodifica lenta), rallenta
+          if (lastPresented != null && meta.presentedFrames != null) {
+            const jump = meta.presentedFrames - lastPresented;
+            seen += 1; if (jump > 1) missed += jump - 1;
+            if (seen >= 30) {
+              if (missed / (seen + missed) > 0.04 && video.playbackRate > 0.5) video.playbackRate = Math.max(0.5, video.playbackRate * 0.75);
+              seen = 0; missed = 0;
+            }
+          }
+          lastPresented = meta.presentedFrames;
           if (aborted()) { video.pause(); reject(new DOMException('Annullato', 'AbortError')); return; }
           const t = meta.mediaTime;
           if (t >= end || video.ended) { video.pause(); resolve(); return; }
@@ -116,11 +126,11 @@ export function geometryFor(calibPoints, W, H, netHeight) {
   if (has3D && p3.length >= 6) { try { P = cameraMatrix(p3, px); } catch { P = null; } }
   const floor = p3.map((X, i) => ({ X, q: px[i] })).filter((o) => o.X[2] === 0);
   if (floor.length >= 4) Hpx = computeHomography(floor.map((o) => ({ x: o.q[0], y: o.q[1] })), floor.map((o) => ({ x: o.X[0], y: o.X[1] })));
-  return { P, Hpx, mode: P ? '3d' : Hpx ? '2d' : null };
+  return { P, Hpx, W, H, mode: P ? '3d' : Hpx ? '2d' : null };
 }
 
 export function ralliesFromFrames(frames, geo, opts = {}) {
-  if (geo.mode === '3d') return extractRallies3D(frames, geo.P, opts);
+  if (geo.mode === '3d') return extractRallies3D(frames, geo.P, { W: geo.W, H: geo.H, ...opts });
   if (geo.mode === '2d') return extractRallies2D(frames, geo.Hpx, opts);
   return [];
 }

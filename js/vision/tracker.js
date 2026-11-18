@@ -57,13 +57,13 @@ export function buildTracks(frames, opts = {}) {
         px = last.x + vx * dt; py = last.y + vy * dt; speed = Math.hypot(vx, vy);
       }
       const gate = (opts.gate ?? 7) + speed * dt * (p.length >= 3 ? 0.35 : 1.2) + (p.length === 1 ? 40 * dt * 30 / 30 + 25 : 0) + tr.miss * 6;
-      return { tr, px, py, gate };
+      return { tr, px, py, gate: Math.min(gate, opts.maxGate ?? 45) };
     });
     // assegnazione greedy per distanza crescente
     const pairs = [];
     preds.forEach((pr, i) => cands.forEach((c, j) => {
       const d = Math.hypot(c.x - pr.px, c.y - pr.py);
-      if (d <= pr.gate) pairs.push({ i, j, d: (d / pr.gate) * (c.fg ? (opts.fgPenalty ?? 1.6) : 1) });
+      if (d <= pr.gate) pairs.push({ i, j, d: (d / pr.gate) * (c.fg ? (opts.fgPenalty ?? 1.6) : 1) * (c.inP ? (opts.inPPenalty ?? 1.6) : 1) });
     }));
     pairs.sort((a, b) => a.d - b.d);
     const usedT = new Set();
@@ -81,16 +81,25 @@ export function buildTracks(frames, opts = {}) {
     });
     active = still;
     // i candidati "da sfondo" non aprono nuove tracce da soli (troppo rumore): solo quelli in movimento
-    for (const c of cands) if (!c.used && !(c.fg && opts.fgNoSeed !== false)) active.push({ pts: [{ t: f.t, x: c.x, y: c.y, inP: c.inP || 0 }], miss: 0 });
+    for (const c of cands) if (!c.used && !(c.fg && opts.fgNoSeed !== false) && !(c.inP && opts.inPNoSeed !== false)) active.push({ pts: [{ t: f.t, x: c.x, y: c.y, inP: c.inP || 0 }], miss: 0 });
   }
   tracks.push(...active);
   // toglie le estremità sovrapposte alle sagome (spesso agganci spuri vicino ai giocatori)
+  const medSpeed = (p) => {
+    const sp = [];
+    for (let i = 1; i < p.length; i++) sp.push(Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y) / Math.max(1e-3, p[i].t - p[i - 1].t));
+    sp.sort((x, y) => x - y);
+    return sp[sp.length >> 1] || 0;
+  };
   for (const tr of tracks) {
+    // tracce veloci (palla davanti ai giocatori vicini alla telecamera): non si tagliano
+    if (opts.fastInside === true && tr.pts.length >= 8 && medSpeed(tr.pts) > (opts.minInsideSpeed ?? 80)) continue;
     let a = 0, b = tr.pts.length;
     while (a < b && tr.pts[a].inP) a++;
     while (b > a && tr.pts[b - 1].inP) b--;
     tr.pts = tr.pts.slice(a, b);
   }
+  if (opts.all) return tracks.filter((tr) => tr.pts.length).sort((a, b) => a.pts[0].t - b.pts[0].t);
   return tracks.filter((tr) => isBallTrack(tr, opts)).sort((a, b) => a.pts[0].t - b.pts[0].t);
 }
 
@@ -104,9 +113,33 @@ function isBallTrack(tr, opts) {
   if (path < (opts.minPath ?? 15)) return false;
   // tracce quasi sempre dentro le sagome dei giocatori = bordi di persone in movimento
   const inside = p.reduce((a, q) => a + (q.inP || 0), 0) / p.length;
-  if (inside > (opts.maxInside ?? 0.6)) return false;
-  // rumore che "salta" avanti e indietro: percorso molto più lungo dello spostamento
-  if (path > disp * 4 && disp < 30) return false;
+  // tracce in parte sovrapposte ai giocatori e lente: numeri/loghi sulle maglie che si muovono col giocatore
+  if (inside > (opts.slowInside ?? 1.01)) {
+    const sp = [];
+    for (let i = 1; i < p.length; i++) sp.push(Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y) / Math.max(1e-3, p[i].t - p[i - 1].t));
+    sp.sort((a, b) => a - b);
+    if ((sp[sp.length >> 1] || 0) < (opts.slowSpeed ?? 90)) return false;
+  }
+  if (inside > (opts.maxInside ?? 0.6)) {
+    // eccezione: palla che passa davanti ai giocatori vicini alla telecamera (veloce e regolare)
+    const sp = [];
+    for (let i = 1; i < p.length; i++) sp.push(Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y) / Math.max(1e-3, p[i].t - p[i - 1].t));
+    sp.sort((a, b) => a - b);
+    const med = sp[sp.length >> 1] || 0;
+    if (!(opts.fastInside === true && p.length >= 8 && med > (opts.minInsideSpeed ?? 80))) return false;
+    tr.fastInside = true;
+  }
+  // rumore che "salta" avanti e indietro: su brevi tratti la palla vera procede in modo regolare
+  // (non uso lo spostamento totale: dopo alzata e attacco la palla può tornare vicino al punto di partenza)
+  let straight = 0, cnt = 0;
+  for (let i = 0; i + 4 < p.length; i += 2) {
+    let steps = 0;
+    for (let k = i + 1; k <= i + 4; k++) steps += Math.hypot(p[k].x - p[k - 1].x, p[k].y - p[k - 1].y);
+    if (steps < 2) continue;
+    straight += Math.hypot(p[i + 4].x - p[i].x, p[i + 4].y - p[i].y) / steps; cnt++;
+  }
+  if (cnt && straight / cnt < (tr.fastInside ? 0.8 : (opts.minStraight ?? 0.55))) return false;
+  if (!cnt && disp < 10) return false;
   return true;
 }
 

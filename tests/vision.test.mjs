@@ -65,3 +65,23 @@ test('2D (solo pavimento): trova gli scambi', () => {
   const rallies = extractRallies2D(frames, Hpx);
   assert.ok(rallies.length >= 3, `scambi 2D: ${rallies.length}`);
 });
+
+test('maglia: preelaborazione isola e normalizza le cifre', async () => {
+  const { prepareJersey } = await import('../js/vision/jersey.js');
+  const { DIGITS } = await import('../js/vision/digits.js');
+  for (const [num, sc] of [[7, 2], [14, 3], [21, 1]]) {
+    const W = 60, H = 40;
+    const img = new Uint8Array(W * H * 3);
+    for (let i = 0; i < W * H; i++) { img[i * 3] = 30; img[i * 3 + 1] = 90; img[i * 3 + 2] = 220; }
+    let x0 = 8;
+    for (const ch of String(num)) {
+      const g = DIGITS[ch];
+      for (let gy = 0; gy < 7; gy++) for (let gx = 0; gx < 5; gx++) if (g[gy][gx] === '1') for (let yy = 0; yy < sc; yy++) for (let xx = 0; xx < sc; xx++) { const i = ((10 + gy * sc + yy) * W + x0 + gx * sc + xx) * 3; img[i] = img[i + 1] = img[i + 2] = 245; }
+      x0 += 6 * sc;
+    }
+    const p = prepareJersey(img, W, H, 3, 40);
+    assert.ok(p, `cifre trovate per ${num}`);
+    assert.equal(p.nDigits, String(num).length, `numero di cifre per ${num}`);
+    assert.ok(p.h >= 40 && p.gray.some((v) => v === 0));
+  }
+});

@@ -89,3 +89,11 @@ export const fmtTime = (t) => {
 };
 
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Element.append nativo trasforma null/false nella scritta "null"/"false":
+// li scartiamo, così i figli condizionali (cond ? h(...) : null) funzionano ovunque.
+if (typeof Element !== 'undefined' && !Element.prototype.__vspAppend) {
+  const orig = Element.prototype.append;
+  Element.prototype.append = function (...kids) { return orig.apply(this, kids.flat(Infinity).filter((k) => k != null && k !== false)); };
+  Element.prototype.__vspAppend = true;
+}

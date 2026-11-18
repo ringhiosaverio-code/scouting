@@ -24,6 +24,18 @@ export const REF_POINTS = [
   { id: 'ntr', label: 'Bordo superiore della rete, all\'antenna destra', x: 3.5, y: 3.5, net: true },
 ];
 
+// Telecamera laterale (in tribuna): la squadra "vicina" (y basso) è quella a sinistra
+// dell'immagine, la linea laterale x = 0.5 è quella lontana. Stessi punti, nomi diversi.
+const SIDE_LABELS = {
+  nl: 'Fondo sinistro, angolo lontano', nr: 'Fondo sinistro, angolo vicino',
+  fr: 'Fondo destro, angolo vicino', fl: 'Fondo destro, angolo lontano',
+  n3l: '3 m di sinistra, lato lontano', n3r: '3 m di sinistra, lato vicino',
+  cl: 'Linea centrale, lato lontano', cr: 'Linea centrale, lato vicino',
+  f3l: '3 m di destra, lato lontano', f3r: '3 m di destra, lato vicino',
+  ntl: 'Bordo superiore della rete, all\'antenna lontana', ntr: 'Bordo superiore della rete, all\'antenna vicina',
+};
+export const refLabel = (rp, view = 'end') => (view === 'side' ? SIDE_LABELS[rp.id] || rp.label : rp.label);
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ---- griglia DataVolley 100 x 101 ----

@@ -105,7 +105,7 @@ battute da entrambi i lati, attacchi, difese, errori, ace):
 
 Sono numeri su video **sintetici**: con riprese reali (luci, pubblico, palloni a
 bordo campo, telecamera mossa) l'accuratezza sarà inferiore e va misurata. Requisiti
-pratici: telecamera fissa dietro il fondo campo, rete calibrata, video ad almeno 720p
+pratici: telecamera fissa (dietro il fondo campo oppure laterale in tribuna), video ad almeno 720p
 (per i numeri di maglia servono giocatori grandi nell'immagine, quindi soprattutto
 quelli del lato vicino). Senza i punti della rete l'analisi funziona in modalità 2D,
 molto meno precisa: serve soprattutto a trovare gli scambi e i tempi morti.
@@ -137,6 +137,20 @@ segnalata per la revisione.
    la posizione della rete (linea rosa tratteggiata, da controllare). In alternativa
    📐 a mano: clicca i 4 angoli e, se visibili, linee dei 3 m, centrale e bordo della
    rete. Inserisci le formazioni.
+   **Video da link**: con **🔗 Link** incolli l'indirizzo del video e il browser lo
+   riproduce in streaming, senza scaricarlo né caricarlo dal PC. Il link resta salvato
+   nella partita e si ricollega da solo alla riapertura.
+
+   | Link | Scouting a clic, playlist | Calibrazione e analisi automatiche |
+   |---|---|---|
+   | File diretto (MP4/WebM/MOV), Dropbox, Google Drive condiviso | sì | sì, se il server consente la lettura dei fotogrammi (CORS); altrimenti calibrazione a mano |
+   | YouTube (anche `youtu.be`, `live/`, `shorts/`, `?t=`) | sì, con i controlli dell'app | no: YouTube non permette di leggere i fotogrammi |
+   | Flusso HLS (`.m3u8`) | sì | no |
+
+   **Telecamera laterale**: oltre alla ripresa da dietro il fondo campo è supportata
+   quella dalla tribuna. La calibrazione automatica riconosce da sola la vista; in
+   quella manuale si sceglie "🎥 Laterale" e i punti cambiano nome (fondo sinistro,
+   lato lontano…). La squadra "vicina" diventa quella a sinistra nel video.
 3. Scoutizza a clic seguendo il pannello a destra, oppure digita i codici nella barra
    sotto il video. Puoi mescolare i due metodi in qualunque momento.
 4. **Report** e **Video analisi** per l'analisi; **DVW** / **CSV** per esportare.
@@ -213,6 +227,7 @@ tests/                       test unitari (node --test) e test end-to-end (Playw
 npm test                                   # test unitari (incluso l'analisi su video sintetico)
 npm run bench                              # banco di prova dell'analisi automatica (6 video sintetici)
 node tools/synth-video.mjs v.webm v.json   # crea un video sintetico di prova + verità (richiede ffmpeg)
+node tests/e2e/link.mjs video.mp4                                            # video da link (diretto con/senza CORS, YouTube simulato)
 npm start & node tests/e2e/smoke.mjs http://localhost:8080/ video.mp4 /tmp   # end-to-end (richiede Playwright)
 ```
 

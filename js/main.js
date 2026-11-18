@@ -13,6 +13,8 @@ import { createPlaylist } from './ui/playlist.js';
 import { createSettings } from './ui/settings.js';
 import { createAuto } from './ui/auto.js';
 import { SKILLS, DEFAULT_SETTINGS } from './lib/constants.js';
+import { classifyVideoUrl } from './lib/videosrc.js';
+import { createYouTubeBinding } from './ui/ytplayer.js';
 
 const app = {
   match: null,
@@ -166,7 +168,7 @@ app.openLineup = (editIndex = null) => {
       h('div', { class: 'row gap wrap' },
         h('label', { class: 'field' }, h('span', {}, 'Batte per prima'), h('select', { onchange: (e) => { draft.serve = e.target.value; } },
           ['*', 'a'].map((t) => h('option', { value: t, selected: draft.serve === t }, m.teams[t].name)))),
-        h('label', { class: 'field' }, h('span', {}, 'Lato vicino alla telecamera'), h('select', { onchange: (e) => { draft.homeNear = e.target.value === '1'; } },
+        h('label', { class: 'field' }, h('span', {}, m.settings.cameraView === 'side' ? 'Squadra a sinistra nel video' : 'Lato vicino alla telecamera'), h('select', { onchange: (e) => { draft.homeNear = e.target.value === '1'; } },
           h('option', { value: '1', selected: draft.homeNear }, m.teams['*'].name),
           h('option', { value: '0', selected: !draft.homeNear }, m.teams.a.name)))),
       isTiebreak && !editing ? h('p', { class: 'muted' }, 'Set decisivo: ricorda il sorteggio per il servizio e il cambio campo a 8 punti (alla richiesta, o con il pulsante ⇅ Campo).') : null);
@@ -211,17 +213,105 @@ app.openVideo = async () => {
   inp.onchange = () => { if (inp.files[0]) loadVideoFile(inp.files[0]); };
   inp.click();
 };
-app.openVideoUrl = (url) => {
-  app.video.src = url;
-  app.match.video.name = url;
-  app.match.video.url = url;
-  app.save();
+// ---------- video da link esterno (streaming, nessun download) ----------
+const yt = createYouTubeBinding(app.video);
+app.yt = yt;
+app.video.addEventListener('yterror', (e) => toast(e.detail.message, 'error', 7000));
+let hls = null;
+function resetVideo() {
+  yt.close();
+  hls?.destroy(); hls = null;
+  if (app.video.dataset.objurl) { URL.revokeObjectURL(app.video.dataset.objurl); delete app.video.dataset.objurl; }
+  app.video.removeAttribute('src');
+  app.video.removeAttribute('crossorigin');
+  app.video.load();
+  app.videoInfo = { kind: 'none', pixels: false };
+}
+app.resetVideo = resetVideo;
+app.videoInfo = { kind: 'none', pixels: false };
+const HLS_JS = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Impossibile caricare ' + src)); document.head.appendChild(s); });
+}
+// carica un link: prova con CORS (serve all'analisi automatica, che legge i pixel),
+// se il server non lo consente riproduce comunque il video senza analisi
+app.openVideoUrl = async (raw, { quiet = false } = {}) => {
+  const c = classifyVideoUrl(raw);
+  if (c.kind === 'invalid') { toast(c.reason, 'error', 5000); return false; }
+  resetVideo();
+  const remember = (url) => {
+    app.match.settings.clickSurface = 'video';
+    if (app.match.video.name && app.match.video.name !== url && app.match.video.url !== url && !quiet) toast('Video diverso da quello registrato nella partita', 'warn', 4000);
+    const file = (() => { try { return decodeURIComponent(new URL(c.url).pathname.split('/').pop()); } catch { return ''; } })();
+    app.match.video.name = c.kind === 'youtube' ? `YouTube ${c.id}` : c.provider === 'drive' ? 'Video Google Drive' : (file || url).slice(0, 80);
+    app.match.video.url = url;
+    app.save();
+    clear($('#video-reopen'));
+  };
+  if (c.kind === 'youtube') {
+    remember(c.url);
+    app.videoInfo = { kind: 'youtube', pixels: false };
+    try { await yt.open(c.id, c.start); } catch (e) { toast(e.message, 'error', 7000); return false; }
+    renderActive();
+    if (!quiet) toast('Video YouTube collegato: scouting a clic disponibile. Analisi e calibrazione automatiche richiedono un file o un link diretto.', 'info', 7000);
+    return true;
+  }
+  const v = app.video;
+  const tryLoad = (cors) => new Promise((res) => {
+    if (cors) v.crossOrigin = 'anonymous'; else v.removeAttribute('crossorigin');
+    const ok = () => { off(); res(true); };
+    const ko = () => { off(); res(false); };
+    const off = () => { v.removeEventListener('loadedmetadata', ok); v.removeEventListener('error', ko); clearTimeout(tm); };
+    const tm = setTimeout(ko, 20000);
+    v.addEventListener('loadedmetadata', ok);
+    v.addEventListener('error', ko);
+    if (c.kind === 'hls' && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      hls?.destroy();
+      hls = new window.Hls({ xhrSetup: (x) => { x.withCredentials = false; } });
+      hls.on(window.Hls.Events.ERROR, (_, d) => { if (d.fatal) ko(); });
+      hls.loadSource(c.url);
+      hls.attachMedia(v);
+    } else v.src = c.url;
+  });
+  if (c.kind === 'hls' && !v.canPlayType('application/vnd.apple.mpegurl') && !window.Hls) {
+    try { await loadScript(HLS_JS); } catch (e) { toast(e.message, 'error', 6000); return false; }
+  }
+  if (!quiet) toast('Collegamento al video…', 'info', 3000);
+  let pixels = true;
+  let ok = await tryLoad(true);
+  if (!ok) { pixels = false; ok = await tryLoad(false); }
+  if (!ok) {
+    const hint = c.provider === 'drive' ? ' Google Drive non sempre permette lo streaming dei file grandi: prova Dropbox o un link diretto al file.' : ' Verifica che il link punti direttamente al file video e sia pubblico.';
+    toast('Impossibile riprodurre il video dal link.' + hint, 'error', 9000);
+    return false;
+  }
+  app.videoInfo = { kind: c.kind, pixels: pixels && c.kind !== 'hls' };
+  remember(c.kind === 'direct' && c.original ? c.original : c.url);
+  renderActive();
+  if (!quiet) toast(pixels ? 'Video in streaming dal link (non scaricato).' : 'Video in streaming. Il server non consente la lettura dei fotogrammi (CORS): analisi automatica non disponibile, scouting a clic sì.', pixels ? 'ok' : 'warn', 7000);
+  return true;
+};
+app.openVideoLink = () => {
+  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://… (YouTube, Google Drive, Dropbox, MP4, .m3u8)', value: /^https?:/.test(app.match.video.url || '') ? app.match.video.url : '' });
+  const go = async () => { const u = inp.value; dlg.close(); await app.openVideoUrl(u); };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  const dlg = modal('Video da link', h('div', { class: 'col gap' },
+    h('label', { class: 'field' }, h('span', {}, 'Link del video'), inp),
+    h('p', { class: 'muted small' }, 'Il video non viene scaricato né caricato: il browser lo riproduce in streaming dal link. Il link viene salvato con la partita.'),
+    h('ul', { class: 'small link-help' },
+      h('li', {}, h('b', {}, 'YouTube'), ' — scouting a clic, playlist e tempi dei tocchi. Analisi e calibrazione automatiche non disponibili (YouTube non permette di leggere i fotogrammi): calibra a mano.'),
+      h('li', {}, h('b', {}, 'Link diretto'), ' a un file MP4/WebM/MOV, ', h('b', {}, 'Dropbox'), ' o ', h('b', {}, 'Google Drive'), ' (condiviso "chiunque abbia il link") — tutto, compresa l\'analisi automatica se il server lo consente.'),
+      h('li', {}, h('b', {}, 'Flussi HLS'), ' (.m3u8) — scouting a clic.'))),
+  { actions: [{ label: 'Annulla' }, { label: 'Apri link', primary: true, onClick: () => { go(); return false; } }] });
 };
 function loadVideoFile(file) {
-  if (app.video.dataset.objurl) URL.revokeObjectURL(app.video.dataset.objurl);
+  resetVideo();
+  app.videoInfo = { kind: 'file', pixels: true };
   const url = URL.createObjectURL(file);
   app.video.dataset.objurl = url;
   app.video.src = url;
+  app.match.video.url = '';
+  app.match.settings.clickSurface = 'video';
   if (app.match.video.name && app.match.video.name !== file.name) toast(`Video diverso da quello della partita (${app.match.video.name})`, 'warn', 4000);
   app.match.video.name = file.name;
   app.save();
@@ -233,7 +323,8 @@ async function offerVideoReopen() {
   clear(box);
   const v = app.match.video;
   if (!v.name || app.video.currentSrc) return;
-  if (v.url && !/^blob:/.test(v.url)) { app.video.src = v.url; return; }
+  if (/^https?:/.test(v.url || '')) { app.openVideoUrl(v.url, { quiet: true }); return; }
+  if (v.url && !/^blob:/.test(v.url)) { app.video.src = v.url; app.videoInfo = { kind: 'file', pixels: true }; return; }
   const fh = await getHandle('video:' + app.match.id);
   box.append(h('button', {
     class: 'btn small primary', onclick: async () => {
@@ -290,7 +381,7 @@ async function newMatchFlow() {
   const m = newMatch();
   m.settings = structuredClone(app.match.settings);
   app.setMatch(m);
-  app.video.removeAttribute('src'); app.video.load();
+  resetVideo();
   app.showTab('setup');
 }
 

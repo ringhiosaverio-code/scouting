@@ -183,3 +183,26 @@ test('valutazione ricezione dalle zone (posizione dell\'alzata)', async () => {
   // coordinate DataVolley canoniche: casa in basso
   assert.equal(receptionEvalFromDV({ x: 0.5 + 5.5 / 3, y: 0.5 + 8.5 / 3 }, '*'), '#');
 });
+
+test('link video esterni: YouTube, Drive, Dropbox, HLS, diretti', async () => {
+  const { classifyVideoUrl } = await import('../js/lib/videosrc.js');
+  let c = classifyVideoUrl('https://youtu.be/UjNw6Gd5Zuc?is=Th_Xs2E6lfa02kCW');
+  assert.equal(c.kind, 'youtube'); assert.equal(c.id, 'UjNw6Gd5Zuc');
+  c = classifyVideoUrl('www.youtube.com/watch?v=UjNw6Gd5Zuc&t=1m30s');
+  assert.equal(c.start, 90);
+  assert.equal(classifyVideoUrl('https://www.youtube.com/live/UjNw6Gd5Zuc').id, 'UjNw6Gd5Zuc');
+  c = classifyVideoUrl('https://drive.google.com/file/d/1AbC_dEf/view?usp=sharing');
+  assert.equal(c.url, 'https://drive.google.com/uc?export=download&id=1AbC_dEf');
+  c = classifyVideoUrl('https://www.dropbox.com/scl/fi/xyz/partita.mp4?rlkey=abc&dl=0');
+  assert.equal(c.url, 'https://dl.dropboxusercontent.com/scl/fi/xyz/partita.mp4?rlkey=abc');
+  assert.equal(classifyVideoUrl('https://cdn.example.com/live/a.m3u8').kind, 'hls');
+  assert.equal(classifyVideoUrl('https://example.com/p.mp4').kind, 'direct');
+  assert.equal(classifyVideoUrl('ftp://example.com/p.mp4').kind, 'invalid');
+});
+
+test('etichette di calibrazione per telecamera laterale', async () => {
+  const { refLabel } = await import('../js/lib/court.js');
+  const nl = { id: 'nl', label: 'Angolo vicino sinistro' };
+  assert.equal(refLabel(nl, 'end'), 'Angolo vicino sinistro');
+  assert.match(refLabel(nl, 'side'), /Fondo sinistro/);
+});

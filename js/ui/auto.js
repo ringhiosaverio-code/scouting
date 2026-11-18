@@ -1,7 +1,7 @@
 // Analisi automatica del video: rilevamento di scambi e tocchi, proposta dei
 // codici di scouting, revisione rapida (accetta / correggi / scarta).
 import { h, s, clear, toast, fmtTime, confirmDialog } from './dom.js';
-import { captureAndProcess, geometryFor, ralliesFromFrames } from '../vision/analyzer.js';
+import { captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
 import { interpretRally } from '../vision/rally.js';
 import { calibrationPairs3D, buildCalibration } from '../lib/court.js';
 import { describe, skillCode, parseSkillCode, interpretTyped } from '../lib/codes.js';
@@ -94,6 +94,7 @@ export function createAuto(app) {
   }
   async function run(start, end) {
     if (!video.currentSrc) { toast('Carica prima il video della partita', 'warn'); return; }
+    if (!app.videoInfo?.pixels) { toast(app.videoInfo?.kind === 'youtube' ? 'L\'analisi automatica non funziona con YouTube: YouTube non permette di leggere i fotogrammi. Usa il file o un link diretto (MP4, Dropbox, Drive).' : 'Questo link non permette di leggere i fotogrammi (CORS o flusso HLS): analisi automatica non disponibile.', 'warn', 8000); return; }
     const g = geometryStatus();
     if (!g.floor) { toast('Calibra il campo (scheda Scouting → 📐 Calibra)', 'warn', 4000); return; }
     running = new AbortController();
@@ -155,7 +156,7 @@ export function createAuto(app) {
     if (!ra || !proposal || !video.currentSrc) return;
     if (!ocrVideo || ocrVideo.src !== video.currentSrc) {
       ocrVideo = document.createElement('video');
-      ocrVideo.muted = true; ocrVideo.preload = 'auto'; ocrVideo.src = video.currentSrc;
+      ocrVideo.muted = true; ocrVideo.preload = 'auto'; corsFor(ocrVideo, video.currentSrc); ocrVideo.src = video.currentSrc;
       await new Promise((r) => ocrVideo.addEventListener('loadeddata', r, { once: true }));
     }
     const skills = proposal.events.filter((e) => e.kind === 'skill');
@@ -297,6 +298,7 @@ export function createAuto(app) {
       h('h3', {}, 'Analisi automatica del video'),
       h('ul', { class: 'checklist' },
         h('li', { class: video.currentSrc ? 'ok' : 'bad' }, video.currentSrc ? `Video caricato (${fmtMin(dur)})` : 'Video non caricato'),
+        video.currentSrc && !app.videoInfo?.pixels ? h('li', { class: 'bad' }, app.videoInfo?.kind === 'youtube' ? 'Video YouTube: i fotogrammi non sono leggibili, analisi non disponibile (usa il file o un link diretto)' : 'Il link non consente la lettura dei fotogrammi (CORS/HLS)') : null,
         h('li', { class: g.floor ? 'ok' : 'bad' }, g.floor ? 'Campo calibrato' : 'Campo non calibrato (scheda Scouting → 📐 Calibra)'),
         h('li', { class: 'ok' }, g.has3D ? 'Rete calibrata: ricostruzione 3D della palla' : 'Rete stimata dalla calibrazione del campo: ricostruzione 3D (per più precisione aggiungi i 2 punti della rete in 📐 Calibra)'),
         h('li', { class: app.rp.current ? 'ok' : 'warn' }, app.rp.current ? 'Formazioni inserite' : 'Inserisci le formazioni per ottenere i codici con i giocatori')),
@@ -315,7 +317,7 @@ export function createAuto(app) {
         ? h('div', {}, h('div', { class: 'progress' }, h('div', { style: { width: `${Math.round(progress.frac * 100)}%` } })), h('div', { class: 'progress-label muted small' }, progress.msg),
           h('button', { class: 'btn danger', onclick: () => running.abort() }, 'Annulla'))
         : h('div', { class: 'row gap wrap' },
-          h('button', { class: 'btn primary', disabled: !video.currentSrc || !g.floor, onclick: () => run(parseMin(fromInp.value) ?? 0, parseMin(toInp.value) ?? dur) }, '🤖 Avvia analisi'),
+          h('button', { class: 'btn primary', disabled: !video.currentSrc || !g.floor || !app.videoInfo?.pixels, onclick: () => run(parseMin(fromInp.value) ?? 0, parseMin(toInp.value) ?? dur) }, '🤖 Avvia analisi'),
           h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: !!st.skipDeadTime, onchange: (e) => { st.skipDeadTime = e.target.checked; app.save(); } }), ' Salta i tempi morti durante lo scouting')),
       h('p', { class: 'muted small' }, 'Telecamera fissa consigliata. Il sistema propone; lo scout conferma o corregge ogni scambio.'));
   }
@@ -369,7 +371,7 @@ export function createAuto(app) {
   }
 
   function render() {
-    if (!video.currentSrc && !videoBox.querySelector('.video-empty')) videoBox.append(h('div', { class: 'video-empty' }, h('p', {}, 'Carica il video della partita.'), h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 Carica video')));
+    if (!video.currentSrc && !videoBox.querySelector('.video-empty')) videoBox.append(h('div', { class: 'video-empty' }, h('p', {}, 'Carica il video della partita.'), h('div', { class: 'row gap wrap' }, h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 File dal PC'), h('button', { class: 'btn', onclick: () => app.openVideoLink() }, '🔗 Link video'))));
     if (video.currentSrc) videoBox.querySelector('.video-empty')?.remove();
     renderSetup();
     renderProposal();

@@ -117,7 +117,7 @@ export function createPlaylist(app) {
     if (playing >= clips.length) playing = -1;
     renderFilters();
     renderList();
-    if (!video.currentSrc && !videoBox.querySelector('.video-empty')) videoBox.append(h('div', { class: 'video-empty' }, h('p', {}, 'Carica il video della partita per vedere le clip.'), h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 Carica video')));
+    if (!video.currentSrc && !videoBox.querySelector('.video-empty')) videoBox.append(h('div', { class: 'video-empty' }, h('p', {}, 'Carica il video della partita per vedere le clip.'), h('div', { class: 'row gap wrap' }, h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 File dal PC'), h('button', { class: 'btn', onclick: () => app.openVideoLink() }, '🔗 Link video'))));
     if (video.currentSrc) videoBox.querySelector('.video-empty')?.remove();
   }
 

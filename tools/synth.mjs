@@ -7,10 +7,11 @@ import { DIGITS } from '../js/vision/digits.js';
 
 const G = -9.81;
 
-export function makeCamera(W = 640, H = 360) {
-  // posizione e orientamento: dietro il fondo "vicino" (Y=0), rialzata
-  const C = [4.5, -13, 8];
-  const target = [4.5, 8, 0];
+export function makeCamera(W = 640, H = 360, view = 'end') {
+  // posizione e orientamento: dietro il fondo "vicino" (Y=0), rialzata;
+  // 'side': di lato, oltre la laterale X = 9 (sistema destrorso: Y cresce verso destra nell'immagine)
+  const C = view === 'side' ? [9 + 13, 9, 7] : [4.5, -13, 8];
+  const target = view === 'side' ? [4.5, 9, 0] : [4.5, 8, 0];
   const f = norm(sub(target, C));
   const r = norm(cross(f, [0, 0, 1]));
   const u = cross(r, f);
@@ -209,8 +210,8 @@ function fillPoly(img, W, H, pts, col) {
 }
 
 // Sequenza di scambi con pause; restituisce { duration, frameAt(t) -> RGB, truth }
-export function makeMatchClip({ W = 640, H = 360, kinds = ['long', 'kill', 'ace', 'out', 'serr'], seed = 7, gap = 4 } = {}) {
-  const cam = makeCamera(W, H);
+export function makeMatchClip({ W = 640, H = 360, kinds = ['long', 'kill', 'ace', 'out', 'serr'], seed = 7, gap = 4, view = 'end' } = {}) {
+  const cam = makeCamera(W, H, view);
   const rand = rng(seed);
   const render = makeRenderer(cam);
   const rallies = [];

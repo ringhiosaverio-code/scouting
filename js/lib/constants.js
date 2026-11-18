@@ -166,6 +166,7 @@ export const TEAM_CHARS = { home: '*', visiting: 'a' };
 export const other = (t) => (t === '*' ? 'a' : '*');
 
 export const DEFAULT_SETTINGS = {
+  cameraView: 'end', // 'end' = da dietro il campo, 'side' = laterale (tribuna)
   format: { setsToWin: 3, points: 25, tiebreakPoints: 15 },
   scoutSets: true, // registra le alzate con clic
   scoutSecondContactLocation: true,

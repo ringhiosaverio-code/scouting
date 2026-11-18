@@ -3,7 +3,7 @@
 import { h, s, $, clear, toast, modal, confirmDialog, fmtTime } from './dom.js';
 import { courtSVG, eventToCourt, toSvg, positionXY, arrow, dot } from './courtsvg.js';
 import {
-  REF_POINTS, buildCalibration, applyH, flipXY, xy2zone, xy2subzone, xy2serveZone, zoneForTeam, COURT_LINES, round2,
+  REF_POINTS, refLabel, buildCalibration, applyH, flipXY, xy2zone, xy2subzone, xy2serveZone, zoneForTeam, COURT_LINES, round2,
 } from '../lib/court.js';
 import { interpretTyped, describe, skillCode, parseSkillCode, rallyWinner, attackInfo } from '../lib/codes.js';
 import { uid, setterPosition, defaultSetter, liberos } from '../lib/engine.js';
@@ -35,9 +35,10 @@ export function createScout(app) {
   const bigCourt = courtSVG({ cls: 'court-svg big-court' });
   const emptyMsg = h('div', { class: 'video-empty' },
     h('p', {}, 'Nessun video caricato.'),
-    h('p', { class: 'muted' }, 'Carica un file video (MP4, WebM, MOV…) oppure scoutizza dal vivo cliccando sul campo schematico.'),
-    h('div', { class: 'row gap' },
-      h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 Carica video'),
+    h('p', { class: 'muted' }, 'Apri un file video dal PC, incolla il link (YouTube, Drive, Dropbox, MP4) senza scaricarlo, oppure scoutizza dal vivo cliccando sul campo schematico.'),
+    h('div', { class: 'row gap wrap' },
+      h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 File dal PC'),
+      h('button', { class: 'btn primary', onclick: () => app.openVideoLink() }, '🔗 Link video'),
       h('button', { class: 'btn', onclick: () => setSurface('court') }, '🏐 Usa il campo schematico')));
   const banner = h('div', { class: 'banner hidden' });
   const videoWrap = h('div', { class: 'video-wrap' }, video, overlay, bigCourt, emptyMsg, banner);
@@ -58,7 +59,8 @@ export function createScout(app) {
     tbtn('10⏭', 'Avanti 10 s (Shift+→)', () => seekBy(10)),
     timeLbl, speedSel,
     h('span', { class: 'spacer' }),
-    h('button', { class: 'btn', onclick: () => app.openVideo() }, '📂 Video'),
+    h('button', { class: 'btn', title: 'Apri un file video dal PC', onclick: () => app.openVideo() }, '📂 Video'),
+    h('button', { class: 'btn', title: 'Video da link (YouTube, Drive, Dropbox, MP4…) senza scaricarlo', onclick: () => app.openVideoLink() }, '🔗 Link'),
     h('button', { class: 'btn', title: 'Calibra il campo sul video', onclick: () => startCalibration() }, '📐 Calibra'),
     surfaceBtn);
 
@@ -140,6 +142,7 @@ export function createScout(app) {
     return c._cache.res;
   }
   const homeNear = () => app.rp.current?.homeNear ?? true;
+  const view = () => app.match.settings.cameraView || 'end';
   // immagine normalizzata -> coordinate campo canoniche (casa in basso)
   function imgToCourt(p) {
     const cal = calibration();
@@ -170,7 +173,7 @@ export function createScout(app) {
         if (!p) return;
         const q = norm2px(p);
         const g = s('g', { class: `calib-pt ${i === calib.idx ? 'current' : ''}` });
-        g.append(s('circle', { cx: q.x, cy: q.y, r: 9 }), s('text', { x: q.x + 12, y: q.y - 10 }, rp.label));
+        g.append(s('circle', { cx: q.x, cy: q.y, r: 9 }), s('text', { x: q.x + 12, y: q.y - 10 }, refLabel(rp, view())));
         makeDraggable(g, rp.id);
         overlay.appendChild(g);
       });
@@ -222,6 +225,7 @@ export function createScout(app) {
   }
   async function autoCalibrate() {
     if (!hasVideo()) { toast('Carica prima un video', 'warn'); return; }
+    if (!app.videoInfo?.pixels) { toast(app.videoInfo?.kind === 'youtube' ? 'Con YouTube la calibrazione automatica non è possibile (i fotogrammi non sono leggibili): clicca i punti a mano.' : 'Questo link non consente di leggere i fotogrammi: calibra a mano.', 'warn', 7000); startCalibration(); return; }
     if (app.match.settings.clickSurface === 'court') setSurface('video');
     video.pause();
     toast('Ricerca delle linee del campo…', 'info', 4000);
@@ -231,11 +235,12 @@ export function createScout(app) {
     const pts = app.match.calibration.points;
     for (const k of Object.keys(pts)) if (!REF_POINTS.find((x) => x.id === k)?.net) delete pts[k];
     Object.assign(pts, r.points);
+    if (r.view) app.match.settings.cameraView = r.view;
     app.save();
     calib = { idx: REF_POINTS.length };
     updateCalibBanner();
     drawOverlay();
-    toast(`Campo riconosciuto (linee spiegate ${Math.round(r.quality * 100)}%). Controlla le linee gialle e la rete stimata, poi Fine.`, 'ok', 7000);
+    toast(`Campo riconosciuto, telecamera ${r.view === 'side' ? 'laterale' : 'da dietro'} (linee spiegate ${Math.round(r.quality * 100)}%). Controlla le linee gialle e la rete stimata, poi Fine.`, 'ok', 7000);
   }
   function drawCourtLines(cal, cls) {
     for (const [[x1, y1], [x2, y2]] of COURT_LINES) {
@@ -273,9 +278,12 @@ export function createScout(app) {
     const cur = REF_POINTS[calib.idx];
     banner.append(
       h('strong', {}, '📐 Calibrazione campo  '),
-      cur ? h('span', {}, `Clicca: ${cur.label}${cur.required ? '' : ' (facoltativo)'} — oppure 🪄 Automatica`) : h('span', {}, 'Trascina i punti per rifinire.'),
+      cur ? h('span', {}, `Clicca: ${refLabel(cur, view())}${cur.required ? '' : ' (facoltativo)'} — oppure 🪄 Automatica`) : h('span', {}, 'Trascina i punti per rifinire.'),
       cal ? h('span', { class: 'muted' }, `  · errore medio ${cal.error.toFixed(2)} m su ${cal.n} punti`) : null,
       h('span', { class: 'spacer' }),
+      h('select', { class: 'small', title: 'Posizione della telecamera', 'aria-label': 'Posizione della telecamera', onchange: (e) => { app.match.settings.cameraView = e.target.value; app.save(); updateCalibBanner(); drawOverlay(); } },
+        h('option', { value: 'end', selected: view() === 'end' }, '🎥 Da dietro il campo'),
+        h('option', { value: 'side', selected: view() === 'side' }, '🎥 Laterale (tribuna)')),
       cur && !cur.required ? h('button', { class: 'btn small', onclick: () => { calib.idx++; updateCalibBanner(); drawOverlay(); } }, 'Salta') : null,
       h('button', { class: 'btn small', title: 'Riconosce da solo le linee del campo', onclick: () => autoCalibrate() }, '🪄 Automatica'),
       h('button', { class: 'btn small', onclick: () => { app.match.calibration.points = {}; calib.idx = 0; app.save(); updateCalibBanner(); drawOverlay(); } }, 'Ricomincia'),

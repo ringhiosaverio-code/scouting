@@ -12,10 +12,16 @@ const once = (el, ev) => new Promise((res, rej) => {
   el.addEventListener('error', ko, { once: true });
 });
 
+// i video da link esterno vanno letti in modalità CORS, altrimenti il canvas è "contaminato"
+export function corsFor(video, src) {
+  try { if (new URL(src, location.href).origin !== location.origin && /^https?:/.test(src)) video.crossOrigin = 'anonymous'; } catch { /* src relativo */ }
+}
+
 // opzioni: { src, start, end, rate, maxWidth, bgSamples, onProgress(frac, msg), signal }
 export async function captureAndProcess(o) {
   const video = document.createElement('video');
   video.muted = true; video.playsInline = true; video.preload = 'auto';
+  corsFor(video, o.src);
   video.src = o.src;
   await once(video, 'loadedmetadata');
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -149,7 +155,7 @@ export function ralliesFromFrames(frames, geo, opts = {}) {
 // Sfondo (mediana per canale) di fotogrammi sparsi del video, in RGB
 export async function backgroundFromVideo(src, { width = 960, samples = 30, start = 0, end = null, onProgress } = {}) {
   const video = document.createElement('video');
-  video.muted = true; video.preload = 'auto'; video.src = src;
+  video.muted = true; video.preload = 'auto'; corsFor(video, src); video.src = src;
   await once(video, 'loadedmetadata');
   const W = Math.min(width, video.videoWidth), H = Math.round(video.videoHeight * W / video.videoWidth);
   const t1 = Math.min(end ?? video.duration, video.duration), t0 = Math.max(0, start);

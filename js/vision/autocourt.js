@@ -119,28 +119,46 @@ function scoreH(Hm, evid, W, H, segs) {
 export function autoCalibrate(rgb, W, H, channels = 3, opts = {}) {
   const maps = ridgeMaps(rgb, W, H, channels);
   const lines = hough(maps.any, W, H, { maxLines: opts.maxLines ?? 40 }).map(lineInfo);
-  const trans = lines.filter((l) => Math.abs(l.ang) < 20).slice(0, opts.nTrans ?? 9);
-  // laterali: inclinate; sinistra sale verso destra (ang < 0 in coordinate immagine), destra il contrario
-  const left = lines.filter((l) => l.ang <= -20 && l.ang >= -85).slice(0, opts.nSide ?? 6);
-  const right = lines.filter((l) => l.ang >= 20 && l.ang <= 85).slice(0, opts.nSide ?? 6);
-  if (trans.length < 2 || !left.length || !right.length) return { ok: false, reason: 'linee del campo non trovate', lines: lines.length };
+  const horiz = lines.filter((l) => Math.abs(l.ang) < 20).slice(0, opts.nTrans ?? 9);
+  const steep = lines.filter((l) => Math.abs(l.ang) >= 20).slice(0, opts.nSteep ?? 10);
+  if (horiz.length < 2 || steep.length < 2) return { ok: false, reason: 'linee del campo non trovate', lines: lines.length };
   const evid = dilate(maps.any, W, H, Math.max(1, Math.round(W / 480)));
   const samples = modelSamples();
+  const views = opts.view && opts.view !== 'auto' ? [opts.view] : ['end', 'side'];
   let best = null;
-  for (const L of left) for (const R of right) {
-    for (let i = 0; i < trans.length; i++) for (let j = 0; j < trans.length; j++) {
-      if (i === j) continue;
-      const tNear = trans[i], tFar = trans[j];
+  const tryModel = (src, dst, extra) => {
+    let Hm;
+    try { Hm = computeHomography(src, dst); } catch { return; }
+    const sc = scoreH(Hm, evid, W, H, samples);
+    if (!best || sc.score > best.s.score) best = { Hm, s: sc, ...extra };
+  };
+  const pairs = (arr) => { const o = []; for (let i = 0; i < arr.length; i++) for (let j = 0; j < arr.length; j++) if (i !== j) o.push([arr[i], arr[j]]); return o; };
+  if (views.includes('end')) {
+    // telecamera dietro una linea di fondo: trasversali orizzontali, laterali inclinate
+    const left = steep.filter((l) => l.ang <= -20 && l.ang >= -85), right = steep.filter((l) => l.ang >= 20 && l.ang <= 85);
+    for (const L of left) for (const R of right) for (const [tNear, tFar] of pairs(horiz)) {
       const a = intersect(tNear, L), b = intersect(tNear, R), c = intersect(tFar, R), d = intersect(tFar, L);
       if (!a || !b || !c || !d) continue;
       if (!(a.y > d.y + 5 && b.y > c.y + 5)) continue; // la trasversale "vicina" sta più in basso
       if (!(b.x - a.x > c.x - d.x)) continue; // prospettiva: il lato vicino appare più largo
       for (let p = 0; p < TRANSVERSE_Y.length; p++) for (let q = p + 1; q < TRANSVERSE_Y.length; q++) {
         const y0 = TRANSVERSE_Y[p], y1 = TRANSVERSE_Y[q];
-        let Hm;
-        try { Hm = computeHomography([{ x: 0, y: y0 }, { x: 9, y: y0 }, { x: 9, y: y1 }, { x: 0, y: y1 }], [a, b, c, d]); } catch { continue; }
-        const s = scoreH(Hm, evid, W, H, samples);
-        if (!best || s.score > best.s.score) best = { Hm, s, L, R, tNear, tFar, y0, y1 };
+        tryModel([{ x: 0, y: y0 }, { x: 9, y: y0 }, { x: 9, y: y1 }, { x: 0, y: y1 }], [a, b, c, d], { view: 'end' });
+      }
+    }
+  }
+  if (views.includes('side')) {
+    // telecamera laterale: linee laterali (lunghe) orizzontali, trasversali inclinate.
+    // Sistema destrorso: X = 0 laterale lontana (in alto), X = 9 laterale vicina; Y = 0 fondo a sinistra
+    for (const [near, far] of pairs(horiz)) for (const [tL, tR] of pairs(steep)) {
+      const a = intersect(far, tL), b = intersect(near, tL), c = intersect(near, tR), d = intersect(far, tR);
+      if (!a || !b || !c || !d) continue;
+      if (!(b.y > a.y + 5 && c.y > d.y + 5)) continue; // la laterale vicina sta più in basso
+      if (!(a.x < d.x - 5 && b.x < c.x - 5)) continue; // trasversale sinistra a sinistra
+      if (!(c.x - b.x > d.x - a.x)) continue; // prospettiva: il lato vicino appare più lungo
+      for (let p = 0; p < TRANSVERSE_Y.length; p++) for (let q = p + 1; q < TRANSVERSE_Y.length; q++) {
+        const y0 = TRANSVERSE_Y[p], y1 = TRANSVERSE_Y[q];
+        tryModel([{ x: 0, y: y0 }, { x: 9, y: y0 }, { x: 9, y: y1 }, { x: 0, y: y1 }], [a, b, c, d], { view: 'side' });
       }
     }
   }
@@ -154,63 +172,67 @@ export function autoCalibrate(rgb, W, H, channels = 3, opts = {}) {
     pts[k] = { x: +(q.x / W).toFixed(5), y: +(q.y / H).toFixed(5) };
   }
   const fin = scoreH(Hr, evid, W, H, samples);
-  return { ok: true, points: pts, H: Hr, quality: +(fin.hit / Math.max(1, fin.inside)).toFixed(2), support: fin.hit, inside: fin.inside };
+  return { ok: true, view: best.view, points: pts, H: Hr, quality: +(fin.hit / Math.max(1, fin.inside)).toFixed(2), support: fin.hit, inside: fin.inside };
 }
 
 // riadatta le linee del modello ai pixel e ricalcola l'omografia dalle intersezioni
+// (funziona per qualunque orientamento: rette ai minimi quadrati totali)
 export function refine(Hm, maps, W, H, iters = 2) {
   let Hc = Hm;
   for (let it = 0; it < iters; it++) {
     const band = it === 0 ? Math.max(4, Math.round(W / 160)) : Math.max(2, Math.round(W / 320));
     const fitted = {};
-    // laterali (fit x = m y + c) e trasversali (fit y = m x + c)
     const defs = [['X0', 0, 'side'], ['X9', 9, 'side'], ...TRANSVERSE_Y.map((Y) => [`Y${Y}`, Y, 'trans'])];
     for (const [id, v, kind] of defs) {
       const a = kind === 'side' ? applyH(Hc, { x: v, y: 0 }) : applyH(Hc, { x: 0, y: v });
       const b = kind === 'side' ? applyH(Hc, { x: v, y: 18 }) : applyH(Hc, { x: 9, y: v });
-      const mask = kind === 'side' ? maps.rv : maps.rh;
       const len = Math.hypot(b.x - a.x, b.y - a.y);
-      const X = [], Y = [];
+      if (!(len > 10)) continue;
+      // linea quasi orizzontale -> creste orizzontali, altrimenti verticali
+      const mask = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? maps.rh : maps.rv;
+      const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      const P = [];
       const n = Math.ceil(len);
-      for (let s = 0; s <= n; s++) {
-        const px = a.x + (b.x - a.x) * s / n, py = a.y + (b.y - a.y) * s / n;
-        // cerca la cresta perpendicolarmente alla linea
-        const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      for (let k = 0; k <= n; k++) {
+        const px = a.x + (b.x - a.x) * k / n, py = a.y + (b.y - a.y) * k / n;
         let bestD = null;
         for (let d = -band; d <= band; d++) {
           const qx = Math.round(px + nx * d), qy = Math.round(py + ny * d);
           if (qx < 0 || qy < 0 || qx >= W || qy >= H) continue;
           if (mask[qy * W + qx] && (bestD === null || Math.abs(d) < Math.abs(bestD))) bestD = d;
         }
-        if (bestD !== null) { X.push(px + nx * bestD); Y.push(py + ny * bestD); }
+        if (bestD !== null) P.push([px + nx * bestD, py + ny * bestD]);
       }
-      if (X.length < 15) continue;
-      // retta ai minimi quadrati con scarto dei punti lontani
-      let idx = X.map((_, i) => i);
-      let m = 0, c = 0;
-      for (let r = 0; r < 3; r++) {
-        const u = idx.map((i) => (kind === 'side' ? Y[i] : X[i])), w = idx.map((i) => (kind === 'side' ? X[i] : Y[i]));
-        const mu = u.reduce((s, v) => s + v, 0) / u.length, mw = w.reduce((s, v) => s + v, 0) / w.length;
-        let sxy = 0, sxx = 0;
-        for (let k = 0; k < u.length; k++) { sxy += (u[k] - mu) * (w[k] - mw); sxx += (u[k] - mu) ** 2; }
-        m = sxx ? sxy / sxx : 0; c = mw - m * mu;
-        const res = idx.map((i) => Math.abs((kind === 'side' ? X[i] : Y[i]) - (m * (kind === 'side' ? Y[i] : X[i]) + c)));
-        const sd = Math.sqrt(res.reduce((s, v) => s + v * v, 0) / res.length);
-        idx = idx.filter((_, k) => res[k] <= Math.max(1.2, 2 * sd));
-        if (idx.length < 10) break;
+      let pts = P;
+      let line = null;
+      for (let r = 0; r < 3 && pts.length >= 10; r++) {
+        line = tls(pts);
+        const res = pts.map(([x, y]) => Math.abs(line.n[0] * x + line.n[1] * y - line.rho));
+        const sd = Math.sqrt(res.reduce((s2, v2) => s2 + v2 * v2, 0) / res.length);
+        pts = pts.filter((_, k) => res[k] <= Math.max(1.2, 2 * sd));
       }
-      if (idx.length >= 10) fitted[id] = { kind, m, c, n: idx.length };
+      if (line && pts.length >= 10) fitted[id] = tls(pts);
     }
     const src = [], dst = [];
     for (const xs of ['X0', 'X9']) for (const Yv of TRANSVERSE_Y) {
-      const s = fitted[xs], t = fitted[`Y${Yv}`];
-      if (!s || !t) continue;
-      // x = s.m y + s.c ; y = t.m x + t.c
-      const y = (t.m * s.c + t.c) / (1 - t.m * s.m), x = s.m * y + s.c;
-      src.push({ x: xs === 'X0' ? 0 : 9, y: Yv }); dst.push({ x, y });
+      const sL = fitted[xs], tL = fitted[`Y${Yv}`];
+      if (!sL || !tL) continue;
+      const q = intersect(sL, tL);
+      if (!q) continue;
+      src.push({ x: xs === 'X0' ? 0 : 9, y: Yv }); dst.push(q);
     }
     if (src.length < 4) break;
     try { Hc = computeHomography(src, dst); } catch { break; }
   }
   return Hc;
+}
+
+// retta ai minimi quadrati totali: { n (normale unitaria), rho } con n·p = rho
+function tls(pts) {
+  const m = pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length], [0, 0]);
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const [x, y] of pts) { sxx += (x - m[0]) ** 2; sxy += (x - m[0]) * (y - m[1]); syy += (y - m[1]) ** 2; }
+  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy); // direzione principale
+  const n = [-Math.sin(th), Math.cos(th)];
+  return { n, rho: n[0] * m[0] + n[1] * m[1] };
 }

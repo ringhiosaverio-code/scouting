@@ -129,3 +129,30 @@ test('battuta ricostruita all\'indietro dalla ricezione (fondo lontano)', async 
   assert.ok(Math.abs(rec.serve.t - serveT) < 0.2, `istante battuta ${rec.serve.t.toFixed(2)} (vero ${serveT})`);
   assert.ok(Math.abs(rec.serve.X[0] - tr.touches[0].pos[0]) < 1.0 && rec.serve.X[1] > 17.5, `punto di battuta ${rec.serve.X.map((v) => v.toFixed(1))} (vero ${tr.touches[0].pos})`);
 });
+
+test('telecamera laterale: calibrazione automatica e analisi degli scambi', async () => {
+  const { autoCalibrate } = await import('../js/vision/autocourt.js');
+  const { geometryFor } = await import('../js/vision/analyzer.js');
+  const sclip = makeMatchClip({ view: 'side' });
+  const g = (t) => toGray(sclip.frameAt(t), sclip.W, sclip.H, 3, W, H);
+  const sbg = medianImage(Array.from({ length: 25 }, (_, k) => g((k + 0.5) * sclip.duration / 25)));
+  const fr = [];
+  let prev = null, cur = g(0);
+  const state = {};
+  for (let i = 1; i < sclip.duration * fps; i++) { const next = g(i / fps); fr.push({ t: (i - 1) / fps, ...processFrame({ prev, cur, next, bg: sbg, w: W, h: H, state }) }); prev = cur; cur = next; }
+  const ac = autoCalibrate(sclip.frameAt(0), sclip.W, sclip.H, 3);
+  assert.ok(ac.ok, ac.reason);
+  assert.equal(ac.view, 'side');
+  const geo = geometryFor(ac.points, W, H, 2.43); // senza i punti della rete
+  const rs = extractRallies3D(fr, geo.P);
+  assert.equal(rs.length, sclip.rallies.length);
+  let serving = '*';
+  rs.forEach((r, k) => {
+    const o = interpretRally(r, { homeNear: true, serving });
+    const tr = sclip.rallies[k];
+    const got = o.events.filter((e) => e.kind === 'skill' && !(e.skill === 'R' && e.ev === '=' && tr.touches.length === 1)).map((e) => e.team + e.skill).join(' ');
+    assert.equal(got, tr.touches.map((x) => (x.side === 'near' ? '*' : 'a') + x.skill).join(' '), `scambio ${k + 1}`);
+    assert.equal(o.winner, tr.winner === 'near' ? '*' : 'a');
+    serving = o.winner;
+  });
+});

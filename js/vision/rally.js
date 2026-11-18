@@ -69,7 +69,7 @@ export function extractRallies3D(frames, P, opts = {}) {
     if (firstServe > 3) firstServe = -1; // la battuta è all'inizio della catena
     for (const sg of firstServe >= 0 ? [] : segs.slice(0, 3)) {
       const vv = velAt(sg.fit, sg.t0), pp = posAt(sg.fit, sg.t0);
-      if (!(isServeFlight(pp, vv) && pp[2] > 2.2 && Math.hypot(...vv) > 12)) {
+      if (!(isServeFlight(pp, vv) && pp[2] > 2.0)) {
         // si può guardare oltre solo un frammento spurio o un lancio di battuta (quasi verticale)
         const nearBase = pp[1] < 1.5 || pp[1] > 16.5;
         const junk = sg.j - sg.i < 8 || Math.hypot(vv[0], vv[1]) < 3 || (nearBase && sg.t1 - sg.t0 < 1.2);
@@ -88,13 +88,14 @@ export function extractRallies3D(frames, P, opts = {}) {
       // è la continuazione dello stesso scambio (palla persa per qualche istante)
       // (anche se prima si era visto un "rimbalzo": se il gioco riprende subito con un volo alto
       // era un tocco basso, es. una ricezione)
-      const quickResume = prev && prev.landing && !prev.landing.extrapolated && ch.pts[0].t - prev.landing.t < 1.2 && p[2] > 1.5;
+      const quickResume = prev && prev.landing && !prev.landing.extrapolated && ch.pts[0].t - prev.landing.t < 1.2 && ch.pts[0].t > prev.landing.t - 0.1 && p[2] > 1.5;
       if (quickResume) {
         const L = prev.landing;
         prev.touches.push(roundTouch({ t: L.t, X: [L.X[0], L.X[1], 0.6], kind: 'touch', side: sideOf(L.X), conf: 0.4 }));
         prev.landing = null;
       }
-      if (prev && ch.pts[0].t - prev.obsEnd < (opts.resumeGap ?? 2.0) && (!prev.landing || prev.landing.extrapolated)) {
+      const gapT = prev ? ch.pts[0].t - prev.obsEnd : null;
+      if (prev && gapT > -0.1 && gapT < (opts.resumeGap ?? 2.0) && (!prev.landing || prev.landing.extrapolated)) {
         const resume = { t: s0.t0 - 0.02, X: p, vin: null, vout: v, kind: 'touch', side: sideOf(p), speedOut: Math.hypot(...v), conf: 0.35, virtual: true, missing: true };
         const more = [resume, ...ev.filter((e) => e.t > s0.t0 + 0.05)];
         if (opts.W) for (const e of more) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); }

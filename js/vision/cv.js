@@ -20,6 +20,29 @@ export function toGray(src, sw, sh, channels, dw, dh) {
   return out;
 }
 
+// Maschera dei pixel del colore del pallone (giallo del Mikasa giallo/blu), ridimensionata
+export function ballColorMask(src, sw, sh, channels, dw, dh, kind = 'yellow') {
+  const out = new Uint8Array(dw * dh);
+  if (kind !== 'yellow') return null;
+  const fx = sw / dw, fy = sh / dh;
+  for (let y = 0; y < dh; y++) {
+    const y0 = Math.floor(y * fy), y1 = Math.max(y0 + 1, Math.floor((y + 1) * fy));
+    for (let x = 0; x < dw; x++) {
+      const x0 = Math.floor(x * fx), x1 = Math.max(x0 + 1, Math.floor((x + 1) * fx));
+      let hit = 0;
+      for (let yy = y0; yy < y1 && !hit; yy++) {
+        let i = (yy * sw + x0) * channels;
+        for (let xx = x0; xx < x1; xx++, i += channels) {
+          const r = src[i], g = src[i + 1], b = src[i + 2];
+          if (r > 110 && g > 105 && Math.min(r, g) - b > 35 && Math.abs(r - g) < 70) { hit = 1; break; }
+        }
+      }
+      out[y * dw + x] = hit;
+    }
+  }
+  return out;
+}
+
 // Mediana pixel per pixel di più fotogrammi (sfondo senza giocatori in movimento)
 export function medianImage(frames) {
   const n = frames.length, len = frames[0].length;
@@ -99,7 +122,7 @@ export function components(m, w, h, minArea = 1, conn8 = false) {
 // Elaborazione di un fotogramma: candidati palla (oggetti piccoli e compatti in
 // movimento) e sagome dei giocatori (primo piano rispetto allo sfondo).
 // prev/cur/next: fotogrammi in grigio consecutivi; bg: sfondo mediano
-export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = null }) {
+export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = null, color = null }) {
   const motionThr = opts.motionThr ?? 22;
   const fgThr = opts.fgThr ?? 30;
   const ballMax = opts.ballMaxArea ?? Math.max(30, Math.round((w * 0.03) ** 2));
@@ -125,6 +148,30 @@ export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = nul
       // candidato sovrapposto a una sagoma: probabilmente bordo di un giocatore in movimento
       const inP = res.players.some((p) => b.x >= p.x0 - 2 && b.x <= p.x1 + 2 && b.y >= p.y0 - 2 && b.y <= p.y1 + 2);
       res.balls.push({ x: +b.x.toFixed(2), y: +b.y.toFixed(2), a: b.area, inP: inP ? 1 : 0 });
+    }
+  }
+  // filtro colore: il candidato deve contenere pixel del colore del pallone diversi dallo sfondo
+  if (color && bg) {
+    const fgThr2 = fgThr * 0.6;
+    const colorFg = (x, y) => color[y * w + x] && Math.abs(cur[y * w + x] - bg[y * w + x]) > fgThr2;
+    const hasColor = (b) => {
+      const r = 2;
+      for (let y = Math.max(0, Math.round(b.y) - r); y <= Math.min(h - 1, Math.round(b.y) + r); y++) for (let x = Math.max(0, Math.round(b.x) - r); x <= Math.min(w - 1, Math.round(b.x) + r); x++) if (colorFg(x, y)) return true;
+      return false;
+    };
+    res.balls = res.balls.filter(hasColor);
+    // oggetti piccoli del colore del pallone anche se fermi o lenti (palla lontana, palla all'apice)
+    const cm = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) cm[i] = color[i] && Math.abs(cur[i] - bg[i]) > fgThr2 ? 1 : 0;
+    const hist = state ? (state.chist ||= []) : [];
+    const seenHere = (b) => hist.filter((fr) => fr.some((q) => Math.abs(q.x - b.x) < 2 && Math.abs(q.y - b.y) < 2)).length;
+    const blobs = components(cm, w, h, 1, true).filter((b) => b.area <= ballMax && Math.max(b.w, b.h) <= 3 * Math.min(b.w, b.h) + 1);
+    if (state) { hist.push(blobs.map((b) => ({ x: b.x, y: b.y }))); if (hist.length > 12) hist.shift(); }
+    for (const b of blobs) {
+      if (seenHere(b) >= 6) continue; // fermo: tabellone, persona a bordo campo
+      if (res.balls.some((c) => Math.abs(c.x - b.x) < 4 && Math.abs(c.y - b.y) < 4)) continue;
+      const inP = res.players.some((p) => b.x >= p.x0 - 2 && b.x <= p.x1 + 2 && b.y >= p.y0 - 2 && b.y <= p.y1 + 2);
+      res.balls.push({ x: +b.x.toFixed(2), y: +b.y.toFixed(2), a: b.area, inP: inP ? 1 : 0, col: 1 });
     }
   }
   // palla spezzata in due da una linea o dalla rete: unisce i candidati molto vicini

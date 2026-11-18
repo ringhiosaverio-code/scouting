@@ -1,6 +1,7 @@
 // Web Worker: elaborazione dei fotogrammi fuori dal thread dell'interfaccia.
-import { toGray, medianImage, processFrame } from './cv.js';
+import { toGray, medianImage, processFrame, ballColorMask } from './cv.js';
 
+let curColor = null;
 let w = 0, h = 0, bg = null, bgFrames = [], prev = null, cur = null, curT = null, opts = {}, state = {};
 
 self.onmessage = (ev) => {
@@ -17,13 +18,21 @@ self.onmessage = (ev) => {
       self.postMessage({ type: 'bgready' });
       break;
     case 'frame': {
-      const g = toGray(new Uint8ClampedArray(m.rgba), w, h, 4, w, h);
+      const rgba = new Uint8ClampedArray(m.rgba);
+      const g = toGray(rgba, w, h, 4, w, h);
+      // taglio o dissolvenza nel video: quasi tutta l'immagine cambia -> si riparte da zero
+      if (cur) {
+        let d = 0;
+        for (let i = 0; i < g.length; i += 7) d += Math.abs(g[i] - cur[i]);
+        if (d / (g.length / 7) > (opts.cutThr ?? 18)) { prev = cur = null; curT = null; state = {}; }
+      }
       if (cur && prev) {
-        const r = processFrame({ prev, cur, next: g, bg, w, h, opts, state });
+        const r = processFrame({ prev, cur, next: g, bg, w, h, opts, state, color: curColor });
         self.postMessage({ type: 'result', t: curT, balls: r.balls, players: r.players });
       } else if (cur) self.postMessage({ type: 'result', t: curT, balls: [], players: [] });
       else self.postMessage({ type: 'result', t: null });
       prev = cur; cur = g; curT = m.t;
+      curColor = opts.ballColor && opts.ballColor !== 'any' ? ballColorMask(rgba, w, h, 4, w, h, opts.ballColor) : null;
       break;
     }
     case 'reset': // discontinuità (salto nel video): ricomincia la terna di fotogrammi

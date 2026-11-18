@@ -111,6 +111,9 @@ function isBallTrack(tr, opts) {
   let path = 0;
   for (let i = 1; i < p.length; i++) path += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
   if (path < (opts.minPath ?? 15)) return false;
+  // una palla in volo non è mai lenta nel complesso (oggetti fermi con tremolio, persone che camminano)
+  const dur = p[p.length - 1].t - p[0].t;
+  if (dur > 0 && path / dur < (opts.minTrackSpeed ?? 40)) return false;
   // tracce quasi sempre dentro le sagome dei giocatori = bordi di persone in movimento
   const inside = p.reduce((a, q) => a + (q.inP || 0), 0) / p.length;
   // tracce in parte sovrapposte ai giocatori e lente: numeri/loghi sulle maglie che si muovono col giocatore

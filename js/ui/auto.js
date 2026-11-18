@@ -103,6 +103,7 @@ export function createAuto(app) {
     try {
       const res = await captureAndProcess({
         src: video.currentSrc, start, end, rate: +(app.match.settings.analysisRate || 2), signal: running.signal,
+        cvOpts: { ballColor: app.match.settings.ballColor || 'yellow' },
         onProgress: (frac, msg) => {
           const el = (performance.now() - t0) / 1000;
           const eta = frac > 0.06 ? el / frac - el : null;
@@ -306,6 +307,8 @@ export function createAuto(app) {
         h('label', { class: 'field inline' }, h('span', {}, 'Rete'), h('select', { onchange: (e) => { st.netHeight = +e.target.value; app.save(); } },
           h('option', { value: 2.43, selected: st.netHeight === 2.43 }, 'Maschile 2,43 m'), h('option', { value: 2.24, selected: st.netHeight === 2.24 }, 'Femminile 2,24 m'),
           h('option', { value: 2.35, selected: st.netHeight === 2.35 }, 'Under 2,35 m'), h('option', { value: 2.15, selected: st.netHeight === 2.15 }, 'Under F 2,15 m'))),
+        h('label', { class: 'field inline' }, h('span', {}, 'Pallone'), h('select', { title: 'Il colore aiuta a distinguere la palla da braccia, gambe e scarpe dei giocatori', onchange: (e) => { st.ballColor = e.target.value; app.save(); } },
+          h('option', { value: 'yellow', selected: (st.ballColor || 'yellow') === 'yellow' }, 'Giallo/blu (Mikasa)'), h('option', { value: 'any', selected: st.ballColor === 'any' }, 'Altro colore (nessun filtro)'))),
         h('label', { class: 'field inline' }, h('span', {}, 'Velocità'), h('select', { onchange: (e) => { st.analysisRate = +e.target.value; app.save(); } },
           [[1, 'Accurata (1×)'], [2, 'Normale (2×)'], [4, 'Veloce (4×)']].map(([v, l]) => h('option', { value: v, selected: (st.analysisRate || 2) === v }, l))))),
       running

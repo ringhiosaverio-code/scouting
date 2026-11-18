@@ -122,7 +122,8 @@ export function components(m, w, h, minArea = 1, conn8 = false) {
 // Elaborazione di un fotogramma: candidati palla (oggetti piccoli e compatti in
 // movimento) e sagome dei giocatori (primo piano rispetto allo sfondo).
 // prev/cur/next: fotogrammi in grigio consecutivi; bg: sfondo mediano
-export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = null, color = null }) {
+// rgb (facoltativo): fotogramma a colori (rw x rh, ch canali) per il colore delle maglie
+export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = null, color = null, rgb = null, rw = w, rh = h, ch = 4 }) {
   const motionThr = opts.motionThr ?? 22;
   const fgThr = opts.fgThr ?? 30;
   const ballMax = opts.ballMaxArea ?? Math.max(30, Math.round((w * 0.03) ** 2));
@@ -130,12 +131,17 @@ export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = nul
   const playerMin = opts.playerMinArea ?? Math.round(w * h * 0.0012);
   const res = { balls: [], players: [] };
   const smallFg = [];
+  // distanza media dallo sfondo: alta quando l'inquadratura non è quella principale
+  // (replay, primo piano, grafica a tutto schermo)
+  if (bg) { let d = 0, n = 0; for (let i = 0; i < cur.length; i += 11) { d += Math.abs(cur[i] - bg[i]); n++; } res.vd = +(d / n).toFixed(1); }
   if (bg) {
     const fm = diffMask(cur, bg, fgThr);
     for (const b of components(fm, w, h, ballMin)) {
       if (b.area >= playerMin) {
         if (b.h < b.w * 0.8) continue; // le persone sono più alte che larghe
-        res.players.push({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, cx: +b.x.toFixed(1), a: b.area });
+        const pl = { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, cx: +b.x.toFixed(1), a: b.area };
+        if (rgb) { const c = torsoColor(rgb, rw, rh, ch, cur, bg, w, h, b, fgThr); if (c) pl.col = c; }
+        res.players.push(pl);
       } else if (b.area <= ballMax && b.fill >= 0.4 && Math.max(b.w, b.h) / Math.min(b.w, b.h) <= 2.2) smallFg.push(b);
     }
   }
@@ -202,4 +208,18 @@ export function processFrame({ prev, cur, next, bg, w, h, opts = {}, state = nul
     }
   }
   return res;
+}
+
+// colore medio del busto di una sagoma (solo pixel diversi dallo sfondo): distingue le squadre
+function torsoColor(rgb, rw, rh, ch, cur, bg, w, h, b, fgThr) {
+  const sx = rw / w, sy = rh / h;
+  const y0 = Math.round(b.y0 + (b.y1 - b.y0) * 0.22), y1 = Math.round(b.y0 + (b.y1 - b.y0) * 0.6);
+  const x0 = Math.round(b.x0 + (b.x1 - b.x0) * 0.2), x1 = Math.round(b.x1 - (b.x1 - b.x0) * 0.2);
+  let r = 0, g = 0, bl = 0, n = 0;
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    if (Math.abs(cur[y * w + x] - bg[y * w + x]) <= fgThr) continue;
+    const i = (Math.min(rh - 1, Math.round(y * sy)) * rw + Math.min(rw - 1, Math.round(x * sx))) * ch;
+    r += rgb[i]; g += rgb[i + 1]; bl += rgb[i + 2]; n++;
+  }
+  return n >= 4 ? [Math.round(r / n), Math.round(g / n), Math.round(bl / n)] : null;
 }

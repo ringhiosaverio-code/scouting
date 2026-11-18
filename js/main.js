@@ -239,6 +239,7 @@ function loadScript(src) {
 app.openVideoUrl = async (raw, { quiet = false } = {}) => {
   const c = classifyVideoUrl(raw);
   if (c.kind === 'invalid') { toast(c.reason, 'error', 5000); return false; }
+  if (window.VSP_NO_SW) { toast('Nell\'anteprima su claude.ai i video da link esterni sono bloccati dal browser. Apri l\'app da GitHub Pages o sul PC (npm start).', 'error', 9000); return false; }
   resetVideo();
   const remember = (url) => {
     app.match.settings.clickSurface = 'video';
@@ -342,6 +343,7 @@ app.openVideoLink = () => {
   const go = async () => { const u = inp.value; dlg.close(); await app.openVideoUrl(u); };
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
   const dlg = modal('Video da link', h('div', { class: 'col gap' },
+    window.VSP_NO_SW ? h('p', { class: 'warn-box' }, '⚠ Questa è l\'anteprima su claude.ai: qui il browser blocca YouTube, MEGA e i video di altri siti. I link funzionano nell\'app vera: ', h('a', { href: 'https://ringhiosaverio-code.github.io/scouting/', target: '_blank', rel: 'noopener' }, 'ringhiosaverio-code.github.io/scouting'), ' (dopo aver attivato GitHub Pages) oppure avviata sul PC con npm start.') : null,
     h('label', { class: 'field' }, h('span', {}, 'Link del video'), inp),
     h('p', { class: 'muted small' }, 'Il video non viene scaricato né caricato: il browser lo riproduce in streaming dal link. Il link viene salvato con la partita.'),
     h('ul', { class: 'small link-help' },

@@ -160,15 +160,16 @@ export function makeRenderer(cam) {
   line([-0.5, 9, 0], [-0.5, 9, 2.43], [200, 200, 200], 3);
   line([9.5, 9, 0], [9.5, 9, 2.43], [200, 200, 200], 3);
 
-  return function render(t, players, ball) {
+  // o.swapped: squadre scambiate di campo (colori invertiti); o.posOf(p, t): posizioni fuori dallo scambio
+  return function render(t, players, ball, o = {}) {
     const img = new Uint8ClampedArray(bg);
     // giocatori dal più lontano al più vicino
-    const ps = players.map((p) => ({ p, pos: playerPos(p, t) })).sort((a, b) => b.pos[1] - a.pos[1]);
+    const ps = players.map((p) => ({ p, pos: o.posOf ? o.posOf(p, t) : playerPos(p, t) })).sort((a, b) => b.pos[1] - a.pos[1]);
     for (const { p, pos } of ps) {
       const feet = cam.project([pos[0], pos[1], 0]);
       const head = cam.project([pos[0], pos[1], 1.9]);
       const hw = cam.focal * 0.25 / feet.depth;
-      const col = p.side === 'near' ? [30, 90, 220] : [210, 40, 40];
+      const col = (p.side === 'near') !== !!o.swapped ? [30, 90, 220] : [210, 40, 40];
       fillRect(img, W, H, feet.x - hw, head.y, feet.x + hw, feet.y, col);
       fillRect(img, W, H, feet.x - hw * 0.6, head.y - hw * 0.9, feet.x + hw * 0.6, head.y, [230, 190, 160]);
       // numero di maglia (bianco) sul busto, con font bitmap a scala intera
@@ -210,28 +211,69 @@ function fillPoly(img, W, H, pts, col) {
 }
 
 // Sequenza di scambi con pause; restituisce { duration, frameAt(t) -> RGB, truth }
-export function makeMatchClip({ W = 640, H = 360, kinds = ['long', 'kill', 'ace', 'out', 'serr'], seed = 7, gap = 4, view = 'end' } = {}) {
+// breaks: { [indice scambio]: { type, dur } } pausa DOPO quello scambio:
+//   'timeout'    giocatori alle panchine (fuori dalla laterale X = 0) e ritorno
+//   'videocheck' giocatori fermi in campo; con replay: true, a metà pausa un replay (inquadratura diversa)
+//   'setbreak'   giocatori fuori, poi le squadre rientrano scambiate di campo
+//   'cutend'     montaggio: lo scambio è tagliato prima dell'atterraggio (primo piano per 3 s)
+export function makeMatchClip({ W = 640, H = 360, kinds = ['long', 'kill', 'ace', 'out', 'serr'], seed = 7, gap = 4, view = 'end', breaks = {}, t0 = 2 } = {}) {
   const cam = makeCamera(W, H, view);
   const rand = rng(seed);
   const render = makeRenderer(cam);
+  const close = makeCloseup(W, H);
   const rallies = [];
-  let t = 2;
-  let server = 'near';
-  for (const k of kinds) {
+  const windows = [];
+  let t = t0;
+  let server = 'near', swapped = false;
+  kinds.forEach((k, idx) => {
     const r = scriptRally(k, t, server);
     server = r.winner;
     const players = makePlayers(r, rand);
     const path = ballPath(r);
-    rallies.push({ kind: k, ...r, players, path });
-    t = path.end + gap;
-  }
+    rallies.push({ kind: k, ...r, players, path, swapped });
+    const br = breaks[idx];
+    const g = br && br.type !== 'cutend' ? br.dur : gap;
+    if (br) windows.push({ ...br, after: idx, t0: br.type === 'cutend' ? r.landing.t - 0.35 : path.end, t1: br.type === 'cutend' ? r.landing.t + 3 : path.end + g, swappedBefore: swapped });
+    if (br?.type === 'setbreak') { swapped = !swapped; server = 'near'; }
+    t = path.end + g;
+  });
   const duration = t;
-  // giocatori "a riposo" tra gli scambi: quelli dello scambio più vicino
+  const bench = (p) => [-2.2 - 0.6 * (p.i % 2), (p.side === 'near' ? 2 : 11) + p.i];
   const frameAt = (tt) => {
+    const w = windows.find((x) => tt >= x.t0 && tt <= x.t1);
     let cur = rallies[0];
-    for (const r of rallies) if (tt >= r.path.start - gap / 2) cur = r;
+    for (const r of rallies) if (tt >= r.path.start - (w ? 0.5 : gap / 2)) cur = r;
+    if (w && w.type === 'cutend') return close(tt);
+    if (w) {
+      const prevR = rallies[w.after];
+      const u = (tt - w.t0) / (w.t1 - w.t0);
+      if (w.type === 'videocheck' && w.replay && u > 0.3 && u < 0.6) return close(tt);
+      if (w.type === 'videocheck') return render(tt, prevR.players, null, { swapped: w.swappedBefore });
+      // fuori campo: andata (8 s), sosta, ritorno (8 s)
+      const walk = Math.min(1, (tt - w.t0) / 8, (w.t1 - tt) / 8);
+      const nextR = rallies[w.after + 1] || prevR;
+      const second = u > 0.5 && w.type === 'setbreak';
+      const ps = second ? nextR.players : prevR.players;
+      return render(tt, ps, null, {
+        swapped: second ? !w.swappedBefore : w.swappedBefore,
+        posOf: (p, t2) => { const a = playerPos(p, t2), b = bench(p); return [a[0] + (b[0] - a[0]) * walk, a[1] + (b[1] - a[1]) * walk]; },
+      });
+    }
     const b = cur.path.at(tt);
-    return render(tt, cur.players, b);
+    return render(tt, cur.players, b, { swapped: cur.swapped });
   };
-  return { cam, W, H, duration, frameAt, rallies, calibration: calibrationPoints(cam) };
+  return { cam, W, H, duration, frameAt, rallies, windows, calibration: calibrationPoints(cam) };
+}
+
+// inquadratura diversa (replay/primo piano): grandi forme che cambiano nel tempo
+function makeCloseup(W, H) {
+  return (t) => {
+    const img = new Uint8ClampedArray(W * H * 3);
+    fill(img, W, H, [120, 85, 50]);
+    const k = Math.floor(t * 2);
+    fillRect(img, W, H, W * 0.2 + 30 * Math.sin(k), H * 0.1, W * 0.55 + 30 * Math.sin(k), H, [30, 90, 220]);
+    fillRect(img, W, H, W * 0.6, H * 0.25, W * 0.85, H, [230, 190, 160]);
+    fillCircle(img, W, H, W * 0.75, H * 0.3, H * 0.15, [250, 230, 40]);
+    return img;
+  };
 }

@@ -78,7 +78,7 @@ export function createYouTubeBinding(video) {
         player = new YT.Player(el, {
           videoId: id,
           width: '100%', height: '100%',
-          playerVars: { rel: 0, modestbranding: 1, playsinline: 1, start: Math.floor(start || 0), controls: 1, disablekb: 1 },
+          playerVars: { origin: location.origin, rel: 0, modestbranding: 1, playsinline: 1, start: Math.floor(start || 0), controls: 1, disablekb: 1 },
           events: {
             onReady: () => {
               ready = true;

@@ -1,7 +1,7 @@
 // Web Worker: elaborazione dei fotogrammi fuori dal thread dell'interfaccia.
 import { toGray, medianImage, processFrame, ballColorMask } from './cv.js';
 
-let curColor = null;
+let curColor = null, curRgba = null, cutAt = null;
 let w = 0, h = 0, bg = null, bgFrames = [], prev = null, cur = null, curT = null, opts = {}, state = {};
 
 self.onmessage = (ev) => {
@@ -24,14 +24,15 @@ self.onmessage = (ev) => {
       if (cur) {
         let d = 0;
         for (let i = 0; i < g.length; i += 7) d += Math.abs(g[i] - cur[i]);
-        if (d / (g.length / 7) > (opts.cutThr ?? 18)) { prev = cur = null; curT = null; state = {}; }
+        if (d / (g.length / 7) > (opts.cutThr ?? 18)) { prev = cur = null; curT = null; state = {}; cutAt = m.t; }
       }
       if (cur && prev) {
-        const r = processFrame({ prev, cur, next: g, bg, w, h, opts, state, color: curColor });
-        self.postMessage({ type: 'result', t: curT, balls: r.balls, players: r.players });
+        const r = processFrame({ prev, cur, next: g, bg, w, h, opts, state, color: curColor, rgb: curRgba, ch: 4 });
+        self.postMessage({ type: 'result', t: curT, balls: r.balls, players: r.players, vd: r.vd });
       } else if (cur) self.postMessage({ type: 'result', t: curT, balls: [], players: [] });
-      else self.postMessage({ type: 'result', t: null });
-      prev = cur; cur = g; curT = m.t;
+      else self.postMessage({ type: 'result', t: null, cut: cutAt });
+      cutAt = null;
+      prev = cur; cur = g; curT = m.t; curRgba = rgba;
       curColor = opts.ballColor && opts.ballColor !== 'any' ? ballColorMask(rgba, w, h, 4, w, h, opts.ballColor) : null;
       break;
     }

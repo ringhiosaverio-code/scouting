@@ -318,3 +318,4 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .video-wrap video.hidden + .yt-holder { display: none; }
 .link-help { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .link-help li { line-height: 1.4; }
+.warn-box { background: color-mix(in srgb, #f0b429 18%, transparent); border: 1px solid #f0b429; border-radius: 6px; padding: 8px 10px; margin: 0; line-height: 1.45; }

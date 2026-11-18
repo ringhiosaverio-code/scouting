@@ -34,14 +34,14 @@ export async function captureAndProcess(o) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-  const results = [];
+  const results = [], cuts = [];
   let pending = 0;
   let resolveDone, resolveBg;
   const done = new Promise((r) => { resolveDone = r; });
   const bgReady = new Promise((r) => { resolveBg = r; });
   worker.onmessage = (ev) => {
     const m = ev.data;
-    if (m.type === 'result') { pending--; if (m.t != null) results.push({ t: m.t, balls: m.balls, players: m.players }); }
+    if (m.type === 'result') { pending--; if (m.t != null) results.push({ t: m.t, balls: m.balls, players: m.players, vd: m.vd }); else if (m.cut != null) cuts.push(m.cut); }
     else if (m.type === 'bgready') resolveBg();
     else if (m.type === 'done') resolveDone();
   };
@@ -123,7 +123,7 @@ export async function captureAndProcess(o) {
     video.removeAttribute('src'); video.load();
   }
   results.sort((a, b) => a.t - b.t);
-  return { frames: results, W, H, start, end };
+  return { frames: results, cuts, W, H, start, end };
 }
 
 // Dalla calibrazione dell'utente alle trasformazioni nei pixel di lavoro

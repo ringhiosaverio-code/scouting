@@ -194,3 +194,27 @@ test('giocatori: galleria registrata a mano, riconoscimento e apprendimento dall
   assert.ok(ko <= 3, `errori ${ko}`);
   for (const [n, k] of wrongBy) assert.ok(k <= 1, `#${n} sbagliato ${k} volte dopo la correzione`);
 });
+
+test('pause: time-out, video check con replay, intervallo con cambio campo, scambio tagliato', async () => {
+  const { analyzeBreaks } = await import('../js/vision/breaks.js');
+  const { ballColorMask } = await import('../js/vision/cv.js');
+  const { geometryFor } = await import('../js/vision/analyzer.js');
+  const bc = makeMatchClip({ kinds: ['long', 'kill', 'ace', 'out', 'serr', 'kill'], t0: 6, breaks: { 0: { type: 'timeout', dur: 36 }, 1: { type: 'videocheck', dur: 55, replay: true }, 2: { type: 'setbreak', dur: 130 }, 4: { type: 'cutend' } } });
+  const g = (img) => toGray(img, bc.W, bc.H, 3, W, H);
+  const bgb = medianImage(Array.from({ length: 25 }, (_, k) => g(bc.frameAt((k + 0.5) * bc.duration / 25))));
+  const fr = [];
+  let prev = null, curRgb = bc.frameAt(0), cur = g(curRgb);
+  const state = {};
+  for (let i = 1; i < bc.duration * fps; i++) {
+    const rgb = bc.frameAt(i / fps), next = g(rgb);
+    fr.push({ t: (i - 1) / fps, ...processFrame({ prev, cur, next, bg: bgb, w: W, h: H, state, color: ballColorMask(curRgb, bc.W, bc.H, 3, W, H, 'yellow'), rgb: curRgb, rw: bc.W, rh: bc.H, ch: 3 }) });
+    prev = cur; cur = next; curRgb = rgb;
+  }
+  const geo = geometryFor(bc.calibration, W, H, 2.43);
+  const rs = extractRallies3D(fr, geo.P, { W, H });
+  assert.equal(rs.length, bc.rallies.length);
+  const an = analyzeBreaks(fr, rs, geo.Hpx, {});
+  assert.deepEqual(an.breaks.map((b) => `${b.after}:${b.kind}`), ['0:timeout', '1:videocheck', '2:setbreak']);
+  assert.ok(an.breaks[1].offF > 0.2, 'replay visto durante il video check');
+  assert.deepEqual(an.rallies.map((r) => !!r.cutEnd), [false, false, false, false, true, false]);
+});

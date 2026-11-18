@@ -90,6 +90,14 @@ rotazione. "Accetta in serie" si ferma al primo scambio con una segnalazione.
 L'opzione **"Salta i tempi morti"** usa gli scambi rilevati per saltare le pause
 durante lo scouting manuale.
 
+**Pause e situazioni di gioco**: tra uno scambio e l'altro l'analisi riconosce time-out
+(giocatori verso le panchine), probabile video check (gioco fermo a lungo con i giocatori
+in campo, eventuali replay), fine set e cambio campo (le maglie cambiano metà campo), e
+segna ✂ gli scambi interrotti da un taglio o da un replay. Sono proposte nell'elenco
+della revisione: un clic le registra (time-out della squadra, ⇅ cambio campo) o le scarta;
+"Accetta in serie" si ferma davanti a ognuna, e dopo un video check chiede di verificare il
+punto.
+
 **Quanto è affidabile (misurato su video sintetici con verità nota)**
 `npm run bench` genera 6 video con 41 scambi (giocatori con numeri sulle maglie,
 battute da entrambi i lati, attacchi, difese, errori, ace):
@@ -152,6 +160,15 @@ segnalata per la revisione.
    quella dalla tribuna. La calibrazione automatica riconosce da sola la vista; in
    quella manuale si sceglie "🎥 Laterale" e i punti cambiano nome (fondo sinistro,
    lato lontano…). La squadra "vicina" diventa quella a sinistra nel video.
+   **Giocatori (👕)**: come per la calibrazione, fermi il video su un fotogramma con le
+   squadre in campo e indichi chi è chi: l'app trova le sagome (separa quelle unite per
+   colore di maglia), propone squadra e numero, tu confermi o correggi con un clic, o
+   trascini un riquadro attorno a un giocatore non trovato. Nell'analisi automatica i
+   giocatori che toccano vengono riconosciuti confrontando la sagoma del numero con quelle
+   registrate (la divisa di quella squadra), più rotazione e fondamentale. Ogni scambio
+   accettato insegna: le correzioni entrano nella galleria e gli indizi che sbagliano
+   pesano meno, così lo stesso errore non si ripete. I numeri troppo piccoli (giocatori
+   lontani) non vengono usati per decidere: lì restano rotazione e ruolo.
 3. Scoutizza a clic seguendo il pannello a destra, oppure digita i codici nella barra
    sotto il video. Puoi mescolare i due metodi in qualunque momento.
 4. **Report** e **Video analisi** per l'analisi; **DVW** / **CSV** per esportare.

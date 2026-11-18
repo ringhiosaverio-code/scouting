@@ -2,6 +2,7 @@
 // codici di scouting, revisione rapida (accetta / correggi / scarta).
 import { h, s, clear, toast, fmtTime, confirmDialog } from './dom.js';
 import { galleryOf, galleryCount, describeTouch } from './players.js';
+import { analyzeBreaks, BREAK_LABEL, swappedVs } from '../vision/breaks.js';
 import { identify, learn } from '../vision/playerid.js';
 import { captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
 import { interpretRally } from '../vision/rally.js';
@@ -116,10 +117,19 @@ export function createAuto(app) {
       });
       app._lastFrames = res; // per diagnostica
       const geo = geometryFor(app.match.calibration.points, res.W, res.H, app.match.settings.netHeight);
-      const found = ralliesFromFrames(res.frames, geo).map((r) => ({ ...r, id: uid(), status: 'todo' }));
+      let found = ralliesFromFrames(res.frames, geo).map((r) => ({ ...r, id: uid(), status: 'todo' }));
+      // pause tra gli scambi (time-out, video check, fine set, cambio campo) e scambi tagliati
+      let breaks = [];
+      if (geo.Hpx) {
+        const an = analyzeBreaks(res.frames, found, geo.Hpx, { cuts: res.cuts || [] });
+        found = an.rallies;
+        breaks = an.breaks.map((b) => ({ ...b, id: uid(), afterId: found[b.after].id, status: 'todo' }));
+      }
       // unisce con analisi precedenti (sostituisce l'intervallo analizzato)
       const old = (A()?.rallies || []).filter((r) => r.end < res.start || r.start > res.end || r.status === 'accepted');
-      app.match.analysis = { version: 1, created: new Date().toISOString(), mode: geo.mode, W: res.W, H: res.H, frames: res.frames.length, rallies: [...old, ...found].sort((a, b) => a.start - b.start) };
+      const oldBreaks = (A()?.breaks || []).filter((b) => b.end < res.start || b.start > res.end);
+      app.match.analysis = { version: 1, created: new Date().toISOString(), mode: geo.mode, W: res.W, H: res.H, frames: res.frames.length, rallies: [...old, ...found].sort((a, b) => a.start - b.start), breaks: [...oldBreaks, ...breaks].sort((a, b) => a.start - b.start) };
+      if (breaks.length) toast(`Pause riconosciute: ${breaks.map((b) => BREAK_LABEL[b.kind]).join(', ')}`, 'info', 6000);
       app.save();
       toast(`Analisi completata: ${found.length} scambi rilevati (${geo.mode === '3d' ? 'ricostruzione 3D' : 'modalità 2D'})`, 'ok', 5000);
       selIndex = rallies().findIndex((r) => r.status === 'todo');
@@ -217,6 +227,33 @@ export function createAuto(app) {
     prop.ocr = results;
     render();
   }
+  const breakAfter = (ra) => (A()?.breaks || []).find((b) => b.afterId === ra.id);
+  const breakBefore = (ra) => { const rs = rallies(); const k = rs.indexOf(ra); return k > 0 ? breakAfter(rs[k - 1]) : null; };
+  // pausa registrata come evento nella partita (time-out o cambio campo), al punto giusto della sequenza
+  function applyBreak(b, ev) {
+    app.commit(ev.kind === 'timeout' ? 'Time-out (analisi)' : 'Cambio campo (analisi)', (m) => {
+      const e = { ...ev, id: uid(), vt: b.start + 1 };
+      const k = m.events.findIndex((x) => x.vt != null && x.vt > e.vt);
+      if (k < 0) m.events.push(e); else m.events.splice(k, 0, e);
+      const bb = m.analysis.breaks.find((x) => x.id === b.id);
+      if (bb) bb.status = 'done';
+    });
+    proposal = buildProposal(selIndex);
+    render();
+  }
+  function ignoreBreak(b) { b.status = 'ignored'; app.save(); proposal = buildProposal(selIndex); render(); }
+  function breakRow(b) {
+    const T = app.match.teams;
+    const acts = b.status !== 'todo' ? [h('span', { class: 'muted' }, b.status === 'done' ? ' ✓ registrato' : ' ignorato')]
+      : b.kind === 'timeout' ? [' ', ...['*', 'a'].map((t) => h('button', { class: 'btn small', onclick: (e) => { e.stopPropagation(); applyBreak(b, { kind: 'timeout', team: t }); } }, `T ${T[t].code || T[t].name}`))]
+        : b.kind === 'side' || b.kind === 'setbreak' ? [' ', h('button', { class: 'btn small', onclick: (e) => { e.stopPropagation(); applyBreak(b, { kind: 'side' }); } }, '⇅ Registra cambio campo')]
+          : [];
+    return h('li', { class: `break-row k-${b.kind}`, title: b.why, onclick: () => { video.currentTime = b.start + 1; } },
+      h('span', { class: 'mono' }, fmtTime(b.start)), ' ', h('b', {}, BREAK_LABEL[b.kind]), ' ', h('span', { class: 'muted small' }, `${Math.round(b.dur)} s · ${b.why}`),
+      ...acts,
+      b.status === 'todo' ? h('button', { class: 'btn small', title: 'Non è successo', onclick: (e) => { e.stopPropagation(); ignoreBreak(b); } }, '✕') : null);
+  }
+
   function buildProposal(i) {
     const ra = rallies()[i];
     const cur = app.rp.current;
@@ -225,7 +262,22 @@ export function createAuto(app) {
     // i primi eventi corrispondono, in ordine, ai tocchi rilevati
     const skills = out.events.filter((e) => e.kind === 'skill');
     const labels = ra.touches.map((_, k) => (skills[k] ? `${skills[k].skill}${skills[k].ev}` : ''));
-    return { rallyIdx: i, events: out.events, text: out.events.map(tokenOf).join(' '), notes: out.notes, conf: out.conf, labels };
+    const notes = [...out.notes];
+    let events = out.events;
+    if (ra.cutEnd) {
+      notes.push('Scambio interrotto da un taglio o da un replay: l\'esito non si vede, verifica il punto');
+    }
+    const br = breakAfter(ra);
+    if (br?.kind === 'videocheck') notes.push(`Dopo questo scambio: ${br.why}. Probabile video check: verifica il punto (può essere stato ribaltato)`);
+    const prevBr = breakBefore(ra);
+    if (prevBr && (prevBr.kind === 'side' || prevBr.kind === 'setbreak') && prevBr.status === 'todo') notes.push(`Prima di questo scambio: ${BREAK_LABEL[prevBr.kind]} (${prevBr.why}). Registralo o ignoralo nell'elenco prima di accettare`);
+    // colori delle maglie imparati dagli scambi accettati: le squadre sono dalla parte attesa?
+    const tc = A()?.teamColours;
+    if (tc && ra.colours && cur) {
+      const exp = cur.homeNear ? { near: tc['*'], far: tc.a } : { near: tc.a, far: tc['*'] };
+      if (swappedVs(exp, ra.colours) === true) notes.push('Le maglie dicono che le squadre hanno cambiato campo rispetto a quanto registrato: usa ⇅ Campo nella scheda Scouting');
+    }
+    return { rallyIdx: i, events, text: events.map(tokenOf).join(' '), notes, conf: out.conf, labels };
   }
   function parseProposal(text, base) {
     const toks = text.trim().split(/\s+/).filter(Boolean);
@@ -275,6 +327,12 @@ export function createAuto(app) {
       for (const e of evs) m.events.push({ ...e, id: uid() });
       const r = m.analysis.rallies.find((x) => x.id === ra.id);
       if (r) r.status = 'accepted';
+      // colori delle squadre, per accorgersi poi di un cambio campo non registrato
+      const cur0 = app.rp.current;
+      if (ra.colours && cur0) {
+        const byTeam = cur0.homeNear ? { '*': ra.colours.near, a: ra.colours.far } : { '*': ra.colours.far, a: ra.colours.near };
+        m.analysis.teamColours ||= byTeam;
+      }
     });
     if (!silent) { toast('Scambio aggiunto', 'ok'); next(); }
     return true;
@@ -299,6 +357,8 @@ export function createAuto(app) {
       selIndex = i;
       proposal = buildProposal(i);
       if (!proposal || proposal.notes.length || proposal.conf < minConf || !proposal.events.some((e) => e.kind === 'point')) { stopReason = proposal?.notes[0] || (proposal ? `affidabilità ${Math.round(proposal.conf * 100)}%` : 'set concluso'); break; }
+      const pb = breakBefore(ra);
+      if (pb && pb.status === 'todo' && pb.kind !== 'videocheck') { stopReason = `${BREAK_LABEL[pb.kind]} prima dello scambio`; break; }
       if (galleryReady()) await readNumbers({ quiet: true });
       if (!(await accept(i, true))) break;
       n++;
@@ -404,11 +464,12 @@ export function createAuto(app) {
     rs.forEach((r) => counts[r.status]++);
     listCard.append(h('h3', {}, `Scambi rilevati (${rs.length})`),
       rs.length ? h('p', { class: 'muted small' }, `${counts.accepted} accettati · ${counts.todo} da rivedere · ${counts.discarded} scartati`) : null,
-      h('ol', { class: 'clips' }, rs.map((r, i) => h('li', { class: `${i === selIndex ? 'playing' : ''} st-${r.status}`, onclick: () => select(i) },
+      h('ol', { class: 'clips' }, rs.flatMap((r, i) => [h('li', { class: `${i === selIndex ? 'playing' : ''} st-${r.status}`, onclick: () => select(i) },
         h('span', { class: 'mono' }, fmtTime(r.start)), ' ',
         r.touches.map((tc) => (tc.side === 'near' ? '●' : '○')).join(''),
-        r.landing ? ' ✕' : ' ?', ' ',
-        h('span', { class: 'muted' }, { todo: '', accepted: '✓', discarded: 'scartato' }[r.status])))));
+        r.landing ? ' ✕' : ' ?', r.cutEnd ? ' ✂' : '', ' ',
+        h('span', { class: 'muted' }, { todo: '', accepted: '✓', discarded: 'scartato' }[r.status])),
+      ...(breakAfter(r) ? [breakRow(breakAfter(r))] : [])])));
   }
 
   function render() {

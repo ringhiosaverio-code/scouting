@@ -332,3 +332,5 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .pid-pop { position: absolute; z-index: 5; width: 250px; background: var(--card); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; padding: 8px; display: grid; gap: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
 .pid-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .pid-chip { min-width: 36px; justify-content: center; }
+.clips li.break-row { background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.clips li.break-row.k-videocheck { background: color-mix(in srgb, #f0b429 16%, transparent); }

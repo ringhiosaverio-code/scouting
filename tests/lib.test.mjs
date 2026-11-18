@@ -237,3 +237,43 @@ test('MEGA: link, chiave, nome del file e decifratura a tratti', async () => {
     assert.deepEqual(Buffer.from(out), plain.subarray(a, b + 1));
   }
 });
+
+test('demux: MP4, MOV e WebM (indice dei campioni per la decodifica veloce)', async () => {
+  const { openContainer, keyBefore } = await import('../js/vision/demux.js');
+  const { readFileSync } = await import('node:fs');
+  const rd = (f) => { const b = readFileSync(new URL(`./fixtures/${f}`, import.meta.url)); return { size: b.length, read: async (o, n) => new Uint8Array(b.buffer, b.byteOffset + o, Math.min(n, b.length - o)) }; };
+  const mp4 = await openContainer(rd('mini.mp4'));
+  assert.equal(mp4.kind, 'mp4'); assert.match(mp4.codec, /^avc1\./);
+  assert.equal(mp4.n, 50); assert.equal(mp4.width, 96); assert.equal(mp4.height, 64);
+  assert.ok(Math.abs(mp4.duration - 2) < 0.05);
+  // tempi di presentazione: tutti i fotogrammi da 0 a 1.96 s (con B-frame riordinati)
+  const ts = Array.from(mp4.t).sort((a, b) => a - b);
+  ts.forEach((t, i) => assert.ok(Math.abs(t - i / 25) < 1e-6, `t[${i}] = ${t}`));
+  assert.ok(mp4.key.reduce((a, b) => a + b, 0) >= 5);
+  assert.ok(mp4.t[keyBefore(mp4, 1.0)] <= 1.0);
+  const mov = await openContainer(rd('mini.mov'));
+  assert.equal(mov.n, 30); assert.match(mov.codec, /^avc1\./);
+  const webm = await openContainer(rd('mini.webm'));
+  assert.equal(webm.kind, 'webm'); assert.equal(webm.codec, 'vp09.00.10.08');
+  assert.equal(webm.n, 50); assert.ok(webm.key[0] === 1);
+  Array.from(webm.t).forEach((t, i) => assert.ok(Math.abs(t - i / 25) < 1e-3));
+});
+
+test('rilevatore persone: decodifica YOLOX, tasselli e NMS', async () => {
+  const { decode, nms, tilesFor, toTensor } = await import('../js/vision/detector.js');
+  const size = 64, n = (size / 8) ** 2 + (size / 16) ** 2 + (size / 32) ** 2;
+  const out = new Float32Array(n * 85).fill(-10);
+  for (let i = 0; i < n; i++) { out[i * 85 + 4] = 0; out[i * 85 + 5] = 0; }
+  // una persona nella cella (3,2) del livello a passo 8: centro (3.5*8, 2.5*8), 16x32 px
+  const i = 2 * 8 + 3;
+  out.set([0.5, 0.5, Math.log(2), Math.log(4), 0.95], i * 85); out[i * 85 + 5] = 0.9;
+  const b = decode(out, size, { thr: 0.3 });
+  assert.equal(b.length, 1);
+  assert.ok(Math.abs(b[0].x0 - 20) < 1e-6 && Math.abs(b[0].y1 - 36) < 1e-6);
+  const dup = nms([{ cls: 0, score: 0.9, x0: 0, y0: 0, x1: 10, y1: 20 }, { cls: 0, score: 0.8, x0: 1, y0: 0, x1: 11, y1: 20 }, { cls: 0, score: 0.7, x0: 2, y0: 2, x1: 10, y1: 12 }, { cls: 0, score: 0.6, x0: 50, y0: 0, x1: 60, y1: 20 }]);
+  assert.equal(dup.length, 2); // doppione e riquadro tagliato al bordo del tassello eliminati
+  assert.equal(tilesFor(1280, 720).length, 2);
+  assert.equal(tilesFor(640, 640).length, 1);
+  const t = toTensor(new Uint8ClampedArray([10, 20, 30, 255]), 1);
+  assert.deepEqual(Array.from(t), [30, 20, 10]); // BGR
+});

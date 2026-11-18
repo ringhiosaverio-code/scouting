@@ -11,6 +11,27 @@ import { describe, identify, learn, emptyGallery, splitSilhouette } from '../vis
 import { prepareJersey, readDigits, torsoBox } from '../vision/jersey.js';
 import { buildCalibration, applyH } from '../lib/court.js';
 import { liberos } from '../lib/engine.js';
+import { detectPeople } from '../vision/detector.js';
+import { loadDigitNet, torsoInput, readNumber } from '../vision/digitnet.js';
+
+// ---- numero di maglia letto dalla rete neurale delle cifre ----
+let digitNet = null, digitBroken = false;
+export async function digitsOn(frame, box, candidates) {
+  if (digitBroken) return null;
+  try {
+    digitNet ||= await loadDigitNet();
+    return readNumber(digitNet, torsoInput(frame.rgba, frame.w, frame.h, box), candidates);
+  } catch (e) { digitBroken = true; console.warn('riconoscitore delle cifre non disponibile', e); return null; }
+}
+// letture di più fotogrammi → probabilità combinate (il numero si vede solo in alcuni istanti)
+export function combineReads(reads) {
+  const acc = {}, ok = reads.filter((r) => r && r.pNone < 0.6);
+  if (!ok.length) return { digits: null, readable: false };
+  let tot = 0;
+  for (const r of ok) { const w = 1 - r.pNone; tot += w; const z = r.scores.reduce((a, b) => a + b.p, 0) || 1; for (const s of r.scores) acc[s.num] = (acc[s.num] || 0) + w * s.p / z; }
+  for (const k of Object.keys(acc)) acc[k] /= tot;
+  return { digits: acc, readable: true, nReads: ok.length };
+}
 
 const bgCache = new Map();
 export const galleryOf = (match, team) => (match.teams[team].gallery ||= emptyGallery());
@@ -31,7 +52,29 @@ function grabFrame(video) {
   const c = document.createElement('canvas'); c.width = w; c.height = hh;
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(video, 0, 0, w, hh);
-  return { rgba: ctx.getImageData(0, 0, w, hh).data, w, h: hh };
+  return { rgba: ctx.getImageData(0, 0, w, hh).data, w, h: hh, canvas: c };
+}
+
+// ---- giocatori trovati dalla rete neurale (con ripiego sulla differenza dallo sfondo) ----
+let detectorBroken = false;
+// piedi dentro il campo (con margine: battitori dietro la linea di fondo, giocatori fuori dalle laterali)
+export function onCourt(cal, frame, b) {
+  if (!cal) return true;
+  const c = applyH(cal.H, { x: (b[0] + b[2]) / 2 / frame.w, y: b[3] / frame.h });
+  // ±1 m dalle laterali (fuori: arbitri, guardalinee, panchine), ±4 m dai fondi (battitori)
+  return c.x > 0.5 - 0.35 && c.x < 3.5 + 0.35 && c.y > 0.5 - 1.4 && c.y < 6.5 + 1.4;
+}
+async function neuralPeople(frame) {
+  if (detectorBroken) return null;
+  try {
+    const boxes = await detectPeople(frame.canvas);
+    return boxes.filter((b) => b.cls === 0).map((b) => [b.x0, b.y0, b.x1, b.y1, b.score]);
+  } catch (e) {
+    detectorBroken = true;
+    console.warn('rete neurale non disponibile', e);
+    toast(`Rilevatore neurale non disponibile (${e.message}): uso il metodo semplice`, 'warn', 6000);
+    return null;
+  }
 }
 
 async function background(video) {
@@ -52,7 +95,9 @@ function fgTest(frame, bg) {
   return { cur, k, isFg: (x, y) => { const i = Math.min(bg.h - 1, Math.floor(y / k)) * bg.w + Math.min(bg.w - 1, Math.floor(x / k)); return Math.abs(cur[i] - bg.gray[i]) > 30; } };
 }
 
-async function silhouettes(video, frame) {
+async function silhouettes(video, frame, cal = null) {
+  const nn = await neuralPeople(frame);
+  if (nn) return nn.filter((b) => onCourt(cal, frame, b)).map((b) => b.slice(0, 4));
   const bg = await background(video);
   const { cur, k, isFg } = fgTest(frame, bg);
   const r = processFrame({ cur, bg: bg.gray, w: bg.w, h: bg.h, opts: { playerMinArea: Math.round(bg.w * bg.h * 0.0008) } });
@@ -94,10 +139,18 @@ export function startPlayerRegistration(app, { onDone } = {}) {
   function makeItem(box) {
     const team = teamOf(box);
     const desc = describe(frame.rgba, frame.w, frame.h, 4, box);
-    const gal = galleryOf(app.match, team);
-    const ranking = Object.keys(gal.samples).length ? identify(gal, desc, candidatesFor(app, team)) : null;
-    const guess = ranking && ranking[0].p > 0.45 && (ranking[0].tpl ?? 0) > 0.5 ? ranking[0].num : null;
-    return { box, team, desc, ranking, guess, num: null, status: 'todo' };
+    return { box, team, desc, ranking: null, guess: null, num: null, status: 'todo' };
+  }
+  // proposta di numero: rete delle cifre (tutta la rosa della squadra) + galleria se esiste
+  async function propose(it) {
+    const roster = app.match.teams[it.team].players.map((p) => Number(p.number));
+    const r = await digitsOn(frame, it.box, roster);
+    Object.assign(it.desc, combineReads([r]));
+    const gal = galleryOf(app.match, it.team);
+    it.ranking = identify(gal, it.desc, roster);
+    const top = it.ranking[0];
+    const strong = (top.dig ?? 0) >= 0.55 || (top.tpl ?? 0) > 0.75;
+    it.guess = top && top.p > 0.5 && strong ? top.num : null;
   }
   // riquadro disegnato a mano: per i giocatori non trovati o fusi con altri
   const fromScreen = (X, Y) => { const f = fit(), q = frame.w / video.videoWidth; return [(X - f.ox) / f.k * q, (Y - f.oy) / f.k * q]; };
@@ -118,6 +171,7 @@ export function startPlayerRegistration(app, { onDone } = {}) {
       const p0 = fromScreen(Math.min(a[0], b[0]), Math.min(a[1], b[1])), p1 = fromScreen(Math.max(a[0], b[0]), Math.max(a[1], b[1]));
       const it = makeItem([p0[0], p0[1], p1[0], p1[1]]);
       items.push(it);
+      propose(it).then(() => draw());
       draw();
       openPicker(it, e2);
     };
@@ -127,8 +181,10 @@ export function startPlayerRegistration(app, { onDone } = {}) {
   async function analyse() {
     frame = grabFrame(video);
     let boxes;
-    try { boxes = await silhouettes(video, frame); } catch (e) { toast('Errore: ' + e.message, 'error', 6000); return; }
+    try { boxes = await silhouettes(video, frame, cal); } catch (e) { toast('Errore: ' + e.message, 'error', 6000); return; }
     items = boxes.filter((b) => b[3] - b[1] > 24).map(makeItem);
+    draw();
+    for (const it of items) await propose(it);
     draw();
     if (!items.length) toast('Nessuna sagoma trovata in questo fotogramma: prova un istante con i giocatori fermi e ben visibili', 'warn', 6000);
   }
@@ -217,7 +273,7 @@ export function startPlayerRegistration(app, { onDone } = {}) {
       h('span', {}, frame ? 'Clicca una sagoma e scegli il numero; se un giocatore manca o è unito a un altro, trascina un riquadro attorno a lui. ' : 'Ricerca delle sagome… '),
       h('span', { class: 'muted' }, `Registrati: ${cnt('*')} · ${cnt('a')}`),
       h('span', { class: 'spacer' }),
-      h('button', { class: 'btn small', title: 'Proposta automatica con OCR per le sagome senza numero', onclick: () => ocrAll() }, '🔤 Leggi numeri'),
+      h('button', { class: 'btn small', title: 'Secondo tentativo con un OCR generico (Tesseract) per le sagome rimaste senza proposta', onclick: () => ocrAll() }, '🔤 OCR'),
       guessed.length ? h('button', { class: 'btn small', onclick: () => { for (const it of guessed) confirm(it, it.guess); } }, `✓ Conferma ${guessed.length} proposte`) : null,
       h('button', { class: 'btn small', title: 'Avanza di 3 s e registra un altro fotogramma', onclick: async () => { video.currentTime = Math.min(video.duration - 0.1, video.currentTime + 3); await new Promise((r) => video.addEventListener('seeked', r, { once: true })); items = []; draw(); analyse(); } }, '⏩ Altro fotogramma'),
       h('button', { class: 'btn small primary', onclick: () => finish() }, 'Fine'));
@@ -241,24 +297,57 @@ export function startPlayerRegistration(app, { onDone } = {}) {
 
 // ---- nei tocchi dell'analisi automatica ----
 // legge i descrittori del giocatore poco prima del contatto (più istanti, tiene il migliore)
-export async function describeTouch(video, t, boxNorm, footNorm = null) {
-  let best = null;
-  const bg = await background(video);
-  for (const dt of [-0.3, -0.15, 0]) {
+// Descrittore del giocatore che tocca: lo si individua al tocco (il più vicino al punto del
+// contatto) e lo si segue qualche istante prima e dopo (riquadro più vicino al precedente),
+// leggendo il numero in ogni fotogramma: basta che si veda in uno solo.
+export async function describeTouch(video, t, boxNorm, footNorm = null, cal = null, candidates = null, { maxFrames = 7 } = {}) {
+  let best = null, anchor = null, firstBox = null;
+  const reads = [];
+  const seek = async (tt) => { if (Math.abs(video.currentTime - tt) > 0.01) { video.currentTime = tt; await new Promise((r) => video.addEventListener('seeked', r, { once: true })); } };
+  const offsets = [-0.15, 0.05, -0.4, -0.7, 0.35, -1.0, 0.65].slice(0, maxFrames);
+  for (const dt of offsets) {
+    // numero già letto con sicurezza: inutile continuare
+    const comb = combineReads(reads);
+    if (reads.length >= 2 && comb.readable && Math.max(...Object.values(comb.digits)) > 0.85) break;
     const tt = Math.max(0, t + dt);
-    if (Math.abs(video.currentTime - tt) > 0.01) { video.currentTime = tt; await new Promise((r) => video.addEventListener('seeked', r, { once: true })); }
+    await seek(tt);
     const fr = grabFrame(video);
-    let box = [boxNorm[0] * fr.w, boxNorm[1] * fr.h, boxNorm[2] * fr.w, boxNorm[3] * fr.h];
-    // sagoma fusa con un altro giocatore: si tiene la parte più vicina al punto del tocco
-    const parts = splitSilhouette(fr.rgba, fr.w, fr.h, 4, box, fgTest(fr, bg).isFg);
-    if (parts.length > 1) {
+    let box = null;
+    const nn = await neuralPeople(fr);
+    if (nn) {
+      const cand = nn.filter((b) => onCourt(cal, fr, b));
+      if (Math.abs(dt) <= 0.2 || !anchor) {
+        // vicino al tocco: il giocatore più vicino al punto di contatto
+        const fx = (footNorm ? footNorm[0] : (boxNorm[0] + boxNorm[2]) / 2) * fr.w, fy = (footNorm ? footNorm[1] : boxNorm[3]) * fr.h;
+        const dist = (q) => Math.hypot((q[0] + q[2]) / 2 - fx, (q[3] - fy) * 0.6);
+        cand.sort((x, y) => dist(x) - dist(y));
+        if (cand.length && dist(cand[0]) < Math.max(80, (cand[0][3] - cand[0][1]) * 1.2)) box = cand[0].slice(0, 4);
+      } else {
+        // più lontano nel tempo: lo stesso giocatore, cioè il riquadro più vicino a quello noto
+        const ref = anchor, hgt = ref[3] - ref[1];
+        const dist = (q) => Math.hypot((q[0] + q[2]) / 2 - (ref[0] + ref[2]) / 2, q[3] - ref[3]) + Math.abs((q[3] - q[1]) - hgt) * 0.5;
+        cand.sort((x, y) => dist(x) - dist(y));
+        if (cand.length && dist(cand[0]) < hgt * 0.6 * (1 + Math.abs(dt))) box = cand[0].slice(0, 4);
+      }
+    } else if (boxNorm && Math.abs(dt) <= 0.2) {
+      // ripiego senza rete neurale: sagoma dell'analisi, separata se fusa con altri giocatori
       const fx = (footNorm ? footNorm[0] : (boxNorm[0] + boxNorm[2]) / 2) * fr.w, fy = (footNorm ? footNorm[1] : boxNorm[3]) * fr.h;
-      box = parts.sort((a, b) => Math.hypot((a[0] + a[2]) / 2 - fx, (a[3] - fy) * 0.7) - Math.hypot((b[0] + b[2]) / 2 - fx, (b[3] - fy) * 0.7))[0];
+      const dist = (q) => Math.hypot((q[0] + q[2]) / 2 - fx, (q[3] - fy) * 0.6);
+      box = [boxNorm[0] * fr.w, boxNorm[1] * fr.h, boxNorm[2] * fr.w, boxNorm[3] * fr.h];
+      const bg = await background(video);
+      const parts = splitSilhouette(fr.rgba, fr.w, fr.h, 4, box, fgTest(fr, bg).isFg);
+      if (parts.length > 1) box = parts.sort((x, y) => dist(x) - dist(y))[0];
     }
+    if (!box) continue;
+    anchor = box;
     const d = describe(fr.rgba, fr.w, fr.h, 4, box);
+    d.box = box.map((v, i) => +(v / (i % 2 ? fr.h : fr.w)).toFixed(4));
+    d.t = tt;
+    if (Math.abs(dt) <= 0.2 && !firstBox) firstBox = d.box;
+    reads.push(await digitsOn(fr, box, candidates));
     if (!best || (d.tpl && !best.tpl)) best = d;
-    if (best.tpl) break;
   }
+  if (best) { Object.assign(best, combineReads(reads)); if (firstBox) best.box = firstBox; }
   return best;
 }
 export { corsFor };

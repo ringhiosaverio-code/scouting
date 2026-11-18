@@ -133,12 +133,12 @@ export function histSimilarity(a, b) {
 }
 
 // ---------- galleria e apprendimento ----------
-export function emptyGallery() { return { samples: {}, cues: { tpl: { ok: 1, ko: 0 }, col: { ok: 1, ko: 0 }, prior: { ok: 1, ko: 0 } } }; }
+export function emptyGallery() { return { samples: {}, cues: { tpl: { ok: 1, ko: 0 }, col: { ok: 1, ko: 0 }, prior: { ok: 1, ko: 0 }, dig: { ok: 2, ko: 0 } } }; }
 
 export function addSample(gal, num, desc, { source = 'manual', t = null } = {}) {
   if (!desc || (!desc.tpl && !desc.hist)) return;
   const list = (gal.samples[num] ||= []);
-  list.push({ ...desc, src: source, t });
+  list.push({ tpl: desc.tpl, hist: desc.hist, px: desc.px, src: source, t });
   // tiene i campioni manuali e i più recenti
   while (list.length > MAX_SAMPLES) { const k = list.findIndex((s) => s.src === 'auto'); list.splice(k >= 0 ? k : 0, 1); }
 }
@@ -149,7 +149,10 @@ const cueWeight = (c) => Math.max(0.2, Math.min(3, Math.log((c.ok + 1) / (c.ko +
 // prior: Map/oggetto num -> probabilità (rotazione, fondamentale, frequenze apprese)
 export function identify(gal, desc, candidates, prior = null) {
   const pr = (n) => (prior ? (prior instanceof Map ? prior.get(n) : prior[n]) ?? 0.02 : 1 / candidates.length);
-  const wT = cueWeight(gal.cues.tpl), wC = cueWeight(gal.cues.col), wP = cueWeight(gal.cues.prior);
+  const wT = cueWeight(gal.cues.tpl), wC = cueWeight(gal.cues.col), wP = cueWeight(gal.cues.prior), wD = cueWeight(gal.cues.dig ||= { ok: 2, ko: 0 });
+  // lettura del numero dalla rete neurale (più fotogrammi già combinati): { num: prob }, readable
+  const dig = desc?.digits && desc.readable ? desc.digits : null;
+  const base = 1 / Math.max(2, candidates.length);
   const rows = candidates.map((num) => {
     const ss = gal.samples[num] || [];
     const st = ss.filter((s) => s.tpl);
@@ -164,7 +167,9 @@ export function identify(gal, desc, candidates, prior = null) {
     if (tpl != null) score += wT * 12 * (tpl - 0.72);
     // il colore serve a escludere (libero, altra divisa), non a scegliere tra maglie uguali
     if (col != null) score += wC * 8 * Math.min(0, col - 0.72);
-    return { num, score, tpl, col, prior: p, n: ss.length };
+    let dp = null;
+    if (dig) { dp = dig[num] ?? 0; score += wD * 1.6 * Math.log((dp + 0.02) / (base + 0.02)); }
+    return { num, score, tpl, col, prior: p, n: ss.length, dig: dp };
   }).sort((a, b) => b.score - a.score);
   const z = rows.reduce((s, r) => s + Math.exp(r.score - rows[0].score), 0);
   rows.forEach((r) => { r.p = Math.exp(r.score - rows[0].score) / z; });
@@ -183,11 +188,12 @@ export function learn(gal, ranking, correct, desc, opts = {}) {
   }
   if (ranking?.length) {
     const top = (key) => [...ranking].filter((r) => r[key] != null).sort((a, b) => b[key] - a[key])[0];
-    for (const [cue, key] of [['tpl', 'tpl'], ['col', 'col'], ['prior', 'prior']]) {
+    for (const [cue, key] of [['tpl', 'tpl'], ['col', 'col'], ['prior', 'prior'], ['dig', 'dig']]) {
       const t = top(key);
       const vals = ranking.map((r) => r[key]).filter((v) => v != null);
       if (vals.length > 1 && Math.max(...vals) - Math.min(...vals) < 1e-6) continue; // indizio muto (tutti uguali)
-      if (!t || (key !== 'prior' && !(gal.samples[correct]?.length))) continue;
+      if (!t || (key !== 'prior' && key !== 'dig' && !(gal.samples[correct]?.length))) continue;
+      (gal.cues[cue] ||= { ok: 1, ko: 0 });
       if (t.num === correct) gal.cues[cue].ok++; else gal.cues[cue].ko++;
     }
   }

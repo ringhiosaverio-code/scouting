@@ -65,6 +65,13 @@ export function createAuto(app) {
       const p = P(q[1], q[2]);
       const lab = proposal && proposal.rallyIdx === selIndex ? proposal.labels[i] : String(i + 1);
       overlay.append(s('circle', { cx: p[0], cy: p[1], r: 6, class: `auto-touch ${tc.side}` }), s('text', { x: p[0] + 8, y: p[1] - 8, class: 'auto-label' }, lab || ''));
+      // giocatore riconosciuto al tocco (vicino nel tempo)
+      if (tc.pbox && Math.abs(now - tc.t) < 0.6) {
+        const a = P(tc.pbox[0] * an.W, tc.pbox[1] * an.H), z = P(tc.pbox[2] * an.W, tc.pbox[3] * an.H);
+        const ev = proposal && proposal.rallyIdx === selIndex ? proposal.events.filter((e) => e.kind === 'skill')[i] : null;
+        overlay.append(s('rect', { x: a[0], y: a[1], width: z[0] - a[0], height: z[1] - a[1], class: `auto-pbox ${tc.side}` }));
+        if (ev?.num != null) overlay.append(s('text', { x: a[0], y: a[1] - 4, class: 'auto-label' }, `#${ev.num}`));
+      }
     });
     if (ra.landing) {
       const q = ra.path.reduce((best, z) => (Math.abs(z[0] - ra.landing.t) < Math.abs(best[0] - ra.landing.t) ? z : best), ra.path[0]);
@@ -174,7 +181,7 @@ export function createAuto(app) {
 
   // ---------- lettura dei numeri di maglia (OCR, sperimentale) ----------
   let ocrVideo = null;
-  const galleryReady = () => app.videoInfo?.pixels && (galleryCount(app.match, '*') > 0 || galleryCount(app.match, 'a') > 0);
+  const galleryReady = () => app.videoInfo?.pixels && app.match.settings.autoIdentify !== false;
   async function readNumbers({ quiet = false } = {}) {
     const ra = rallies()[selIndex];
     const prop = proposal;
@@ -189,29 +196,33 @@ export function createAuto(app) {
     if (!quiet) toast('Riconoscimento dei giocatori…');
     for (let k = 0; k < ra.touches.length && k < skills.length; k++) {
       const tc = ra.touches[k], e = skills[k];
-      if (!tc.box) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
+      if (!tc.box && !tc.foot) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
       // il numero letto deve essere di un giocatore in campo (o del libero) di quella squadra
       const cur = app.rp.current;
       const valid = new Set([...(cur ? cur.pos[e.team] : []), ...app.match.teams[e.team].players.filter((p) => p.role === 'L').map((p) => Number(p.number))]);
       const boxH = (tc.box[3] - tc.box[1]) * (ocrVideo.videoHeight || 0);
-      // galleria della squadra (giocatori registrati e correzioni precedenti): confronto diretto
-      if (galleryCount(app.match, e.team) > 0 && boxH >= 40) {
-        const desc = await describeTouch(ocrVideo, tc.t, tc.box, tc.foot);
+      // riconoscimento: rete neurale (chi è il giocatore e che numero ha, su più fotogrammi),
+      // galleria della squadra (registrazioni e correzioni), rotazione e fondamentale
+      {
+        const desc = await describeTouch(ocrVideo, tc.t, tc.box, tc.foot, buildCalibration(app.match.calibration.points), [...valid]);
+        if (!desc) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
+        tc.pbox = desc.box; // riquadro del giocatore al tocco (disegnato sul video)
         const zone = e.skill === 'R' || e.skill === 'D' ? e.ez ?? e.sz : e.sz;
         const prior = new Map(rankPlayers(app.match, cur, app.learner, e.team, e.skill, zone).map((r) => [r.num, r.p]));
         const ranking = identify(galleryOf(app.match, e.team), desc, [...valid], prior);
         const top = ranking[0];
         (prop.pid ||= {})[k] = { desc, ranking, proposed: e.num };
-        // si cambia la proposta solo se il numero è stato davvero riconosciuto (sagoma del numero);
-        // con la sola rotazione resta quella di partenza
-        if (top && top.p >= 0.5 && (top.num === e.num || (top.tpl ?? 0) >= 0.75)) {
+        const seen = (top.dig ?? 0) >= 0.5 || (top.tpl ?? 0) >= 0.75;
+        // si cambia la proposta solo se il numero è stato davvero visto (rete delle cifre o
+        // sagoma registrata); con la sola rotazione resta quella di partenza
+        if (top && top.p >= 0.5 && (top.num === e.num || seen)) {
           const old = e.num;
           e.num = top.num;
           prop.pid[k].proposed = e.num;
           e.auto = { ...(e.auto || {}), pid: Math.round(top.p * 100) };
-          const why = top.tpl != null && top.tpl > 0.55 ? 'numero riconosciuto' : 'posizione e aspetto';
+          const why = (top.dig ?? 0) >= 0.5 ? `numero letto${desc.nReads > 1 ? ` in ${desc.nReads} fotogrammi` : ''}` : (top.tpl ?? 0) >= 0.75 ? 'numero riconosciuto' : 'posizione e aspetto';
           results.push({ k, msg: old === e.num ? `confermato #${e.num} (${Math.round(top.p * 100)}%, ${why})` : `riconosciuto #${e.num} (${Math.round(top.p * 100)}%, ${why}), proposto era #${old}` });
-        } else results.push({ k, msg: `incerto: #${top?.num ?? '?'} ${Math.round((top?.p || 0) * 100)}% — conferma o correggi, l'app impara` });
+        } else results.push({ k, msg: desc.readable ? `incerto: #${top?.num ?? '?'} ${Math.round((top?.p || 0) * 100)}% — conferma o correggi, l'app impara` : 'numero non visibile: resta la proposta da rotazione e ruolo' });
         continue;
       }
       if (boxH < (app.match.settings.ocrMinPx || 90)) { results.push({ k, msg: 'giocatore troppo piccolo nell\'immagine' }); continue; }

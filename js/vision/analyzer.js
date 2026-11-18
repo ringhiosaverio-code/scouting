@@ -126,6 +126,74 @@ export async function captureAndProcess(o) {
   return { frames: results, cuts, W, H, start, end };
 }
 
+// ---- analisi veloce: decodifica diretta (WebCodecs) in più worker paralleli ----
+// o: { file | src, start, end, maxWidth, cvOpts, workers, onProgress(frac, msg), signal }
+// Restituisce lo stesso risultato di captureAndProcess. Lancia un errore se il formato o il
+// browser non lo consentono (chi chiama ripiega sulla lettura tradizionale).
+export async function captureFast(o) {
+  if (typeof VideoDecoder === 'undefined') throw new Error('WebCodecs non disponibile');
+  const source = o.file ? { file: o.file } : { url: new URL(o.src, location.href).href };
+  const nW = Math.max(1, Math.min(o.workers || (navigator.hardwareConcurrency || 4) - 1, 6));
+  const ws = [];
+  const call = (w, msg, until) => new Promise((res, rej) => {
+    const h = (ev) => {
+      const m = ev.data;
+      if (m.type === 'error') { w.removeEventListener('message', h); rej(new Error(m.message)); }
+      else if (m.type === until) { w.removeEventListener('message', h); res(m); }
+    };
+    w.addEventListener('message', h);
+    w.postMessage(msg);
+  });
+  const aborted = () => o.signal?.aborted;
+  const onAbort = () => ws.forEach((w) => w.postMessage({ type: 'abort' }));
+  o.signal?.addEventListener('abort', onAbort);
+  try {
+    const mk = () => { const w = new Worker(new URL('./fastworker.js', import.meta.url), { type: 'module' }); ws.push(w); return w; };
+    const w0 = mk();
+    const op = await call(w0, { type: 'open', ...source, maxWidth: o.maxWidth || 480, opts: o.cvOpts || {} }, 'opened');
+    const info = op.info;
+    const start = Math.max(0, o.start || 0);
+    const end = Math.min(info.duration, o.end ?? info.duration);
+    if (!(end > start)) throw new Error('intervallo vuoto');
+    o.onProgress?.(0.01, 'Stima dello sfondo…');
+    const { bg } = await call(w0, { type: 'bg', start, end, samples: o.bgSamples || 25 }, 'bg');
+    if (aborted()) throw new DOMException('Annullato', 'AbortError');
+    // tratti paralleli (almeno ~20 s ciascuno)
+    const k = Math.max(1, Math.min(nW, Math.floor((end - start) / 20)));
+    for (let i = 1; i < k; i++) {
+      const w = mk();
+      await call(w, { type: 'open', ...source, maxWidth: o.maxWidth || 480, opts: o.cvOpts || {} }, 'opened');
+      w.postMessage({ type: 'setbg', bg });
+    }
+    const frames = [], cuts = [], prog = new Array(k).fill(0);
+    const segs = Array.from({ length: k }, (_, i) => [start + (end - start) * i / k, start + (end - start) * (i + 1) / k]);
+    const t0 = performance.now();
+    await Promise.all(ws.slice(0, k).map((w, i) => new Promise((res, rej) => {
+      const [a, b] = segs[i];
+      w.onmessage = (ev) => {
+        const m = ev.data;
+        if (m.type === 'results') { for (const f of m.frames) if (f.t < b || i === k - 1) frames.push(f); prog[i] = Math.max(prog[i], (m.t - a) / (b - a)); }
+        else if (m.type === 'progress') prog[i] = Math.max(prog[i], Math.min(1, (m.t - a) / (b - a)));
+        else if (m.type === 'done') { cuts.push(...m.cuts); prog[i] = 1; res(); return; }
+        else if (m.type === 'error') { rej(new Error(m.message)); return; }
+        else return;
+        const frac = prog.reduce((x, y) => x + y, 0) / k;
+        const sp = (frac * (end - start)) / ((performance.now() - t0) / 1000);
+        o.onProgress?.(0.05 + 0.95 * frac, `Analisi veloce (${k} in parallelo, ${sp.toFixed(1)}× tempo reale)…`);
+      };
+      w.postMessage({ type: 'run', start: a, end: b, warm: i === 0 ? 0 : 1 });
+    })));
+    if (aborted()) throw new DOMException('Annullato', 'AbortError');
+    frames.sort((a, b) => a.t - b.t);
+    // eventuali doppioni ai confini dei tratti
+    const out = frames.filter((f, i) => i === 0 || f.t - frames[i - 1].t > 1e-4);
+    return { frames: out, cuts: cuts.sort((a, b) => a - b), W: info.W, H: info.H, start, end, fast: { workers: k, codec: info.codec, seconds: (performance.now() - t0) / 1000 } };
+  } finally {
+    o.signal?.removeEventListener('abort', onAbort);
+    ws.forEach((w) => w.terminate());
+  }
+}
+
 // Dalla calibrazione dell'utente alle trasformazioni nei pixel di lavoro
 export function geometryFor(calibPoints, W, H, netHeight) {
   const { p3, p2, has3D } = calibrationPairs3D(calibPoints, netHeight);

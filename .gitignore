@@ -4,3 +4,4 @@ node_modules/
 *.webm
 .DS_Store
 .bench-cache/
+samples_local/

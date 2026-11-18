@@ -227,6 +227,7 @@ function resetVideo() {
   app.video.removeAttribute('crossorigin');
   app.video.load();
   app.videoInfo = { kind: 'none', pixels: false };
+  app.videoFile = null;
 }
 app.resetVideo = resetVideo;
 app.videoInfo = { kind: 'none', pixels: false };
@@ -356,6 +357,7 @@ app.openVideoLink = () => {
 function loadVideoFile(file) {
   resetVideo();
   app.videoInfo = { kind: 'file', pixels: true };
+  app.videoFile = file; // per l'analisi veloce (lettura diretta del file)
   const url = URL.createObjectURL(file);
   app.video.dataset.objurl = url;
   app.video.src = url;

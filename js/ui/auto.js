@@ -4,7 +4,7 @@ import { h, s, clear, toast, fmtTime, confirmDialog } from './dom.js';
 import { galleryOf, galleryCount, describeTouch } from './players.js';
 import { analyzeBreaks, BREAK_LABEL, swappedVs } from '../vision/breaks.js';
 import { identify, learn } from '../vision/playerid.js';
-import { captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
+import { captureFast, captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
 import { interpretRally } from '../vision/rally.js';
 import { calibrationPairs3D, buildCalibration } from '../lib/court.js';
 import { describe, skillCode, parseSkillCode, interpretTyped } from '../lib/codes.js';
@@ -105,16 +105,26 @@ export function createAuto(app) {
     progress = { frac: 0, msg: 'Avvio…' };
     renderSetup();
     try {
-      const res = await captureAndProcess({
-        src: video.currentSrc, start, end, rate: +(app.match.settings.analysisRate || 2), signal: running.signal,
-        cvOpts: { ballColor: app.match.settings.ballColor || 'yellow' },
-        onProgress: (frac, msg) => {
-          const el = (performance.now() - t0) / 1000;
-          const eta = frac > 0.06 ? el / frac - el : null;
-          progress = { frac, msg: `${msg} ${Math.round(frac * 100)}%${eta != null ? ` · ~${Math.ceil(eta / 60)} min rimanenti` : ''}` };
-          updateProgress();
-        },
-      });
+      const onProgress = (frac, msg) => {
+        const el = (performance.now() - t0) / 1000;
+        const eta = frac > 0.06 ? el / frac - el : null;
+        progress = { frac, msg: `${msg} ${Math.round(frac * 100)}%${eta != null ? ` · ~${eta < 90 ? Math.ceil(eta) + ' s' : Math.ceil(eta / 60) + ' min'} rimanenti` : ''}` };
+        updateProgress();
+      };
+      const cvOpts = { ballColor: app.match.settings.ballColor || 'yellow' };
+      let res = null;
+      // 1) analisi veloce: decodifica diretta del file in più worker (WebCodecs)
+      const fastSrc = app.videoFile ? { file: app.videoFile } : /^(https?:|\/|mega-stream)/.test(video.currentSrc) || video.currentSrc.startsWith(location.origin) ? { src: video.currentSrc } : null;
+      if (fastSrc && app.match.settings.fastAnalysis !== false) {
+        try { res = await captureFast({ ...fastSrc, start, end, signal: running.signal, cvOpts, onProgress }); }
+        catch (e) {
+          if (e.name === 'AbortError') throw e;
+          console.warn('analisi veloce non disponibile:', e);
+          toast(`Analisi veloce non disponibile (${e.message}): uso la lettura tradizionale, più lenta`, 'warn', 6000);
+        }
+      }
+      // 2) ripiego: il video viene riprodotto e letto fotogramma per fotogramma
+      if (!res) res = await captureAndProcess({ src: video.currentSrc, start, end, rate: +(app.match.settings.analysisRate || 2), signal: running.signal, cvOpts, onProgress });
       app._lastFrames = res; // per diagnostica
       const geo = geometryFor(app.match.calibration.points, res.W, res.H, app.match.settings.netHeight);
       let found = ralliesFromFrames(res.frames, geo).map((r) => ({ ...r, id: uid(), status: 'todo' }));
@@ -131,7 +141,8 @@ export function createAuto(app) {
       app.match.analysis = { version: 1, created: new Date().toISOString(), mode: geo.mode, W: res.W, H: res.H, frames: res.frames.length, rallies: [...old, ...found].sort((a, b) => a.start - b.start), breaks: [...oldBreaks, ...breaks].sort((a, b) => a.start - b.start) };
       if (breaks.length) toast(`Pause riconosciute: ${breaks.map((b) => BREAK_LABEL[b.kind]).join(', ')}`, 'info', 6000);
       app.save();
-      toast(`Analisi completata: ${found.length} scambi rilevati (${geo.mode === '3d' ? 'ricostruzione 3D' : 'modalità 2D'})`, 'ok', 5000);
+      const secs = (performance.now() - t0) / 1000;
+      toast(`Analisi completata in ${secs < 90 ? Math.round(secs) + ' s' : Math.round(secs / 60) + ' min'} (${((res.end - res.start) / secs).toFixed(1)}× tempo reale${res.fast ? `, ${res.fast.workers} in parallelo` : ''}): ${found.length} scambi rilevati`, 'ok', 6000);
       selIndex = rallies().findIndex((r) => r.status === 'todo');
       proposal = null;
     } catch (e) {
@@ -412,7 +423,8 @@ export function createAuto(app) {
           h('option', { value: 2.35, selected: st.netHeight === 2.35 }, 'Under 2,35 m'), h('option', { value: 2.15, selected: st.netHeight === 2.15 }, 'Under F 2,15 m'))),
         h('label', { class: 'field inline' }, h('span', {}, 'Pallone'), h('select', { title: 'Il colore aiuta a distinguere la palla da braccia, gambe e scarpe dei giocatori', onchange: (e) => { st.ballColor = e.target.value; app.save(); } },
           h('option', { value: 'yellow', selected: (st.ballColor || 'yellow') === 'yellow' }, 'Giallo/blu (Mikasa)'), h('option', { value: 'any', selected: st.ballColor === 'any' }, 'Altro colore (nessun filtro)'))),
-        h('label', { class: 'field inline' }, h('span', {}, 'Velocità'), h('select', { onchange: (e) => { st.analysisRate = +e.target.value; app.save(); } },
+        h('label', { class: 'toggle', title: 'Decodifica il file direttamente in più processi paralleli invece di riprodurlo: molte volte più veloce' }, h('input', { type: 'checkbox', checked: st.fastAnalysis !== false, onchange: (e) => { st.fastAnalysis = e.target.checked; app.save(); } }), ' ⚡ Analisi veloce (decodifica diretta)'),
+        h('label', { class: 'field inline', title: 'Solo per la lettura tradizionale (video riprodotto), usata se l\'analisi veloce non è disponibile' }, h('span', {}, 'Velocità di riserva'), h('select', { onchange: (e) => { st.analysisRate = +e.target.value; app.save(); } },
           [[1, 'Accurata (1×)'], [2, 'Normale (2×)'], [4, 'Veloce (4×)']].map(([v, l]) => h('option', { value: v, selected: (st.analysisRate || 2) === v }, l))))),
       running
         ? h('div', {}, h('div', { class: 'progress' }, h('div', { style: { width: `${Math.round(progress.frac * 100)}%` } })), h('div', { class: 'progress-label muted small' }, progress.msg),

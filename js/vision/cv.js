@@ -4,6 +4,10 @@
 // RGB/RGBA -> scala di grigi ridimensionata (media dei pixel del blocco)
 export function toGray(src, sw, sh, channels, dw, dh) {
   const out = new Uint8Array(dw * dh);
+  if (sw === dw && sh === dh) {
+    for (let i = 0, j = 0; i < dw * dh; i++, j += channels) out[i] = (77 * src[j] + 150 * src[j + 1] + 29 * src[j + 2]) >> 8;
+    return out;
+  }
   const fx = sw / dw, fy = sh / dh;
   for (let y = 0; y < dh; y++) {
     const y0 = Math.floor(y * fy), y1 = Math.max(y0 + 1, Math.floor((y + 1) * fy));
@@ -22,8 +26,15 @@ export function toGray(src, sw, sh, channels, dw, dh) {
 
 // Maschera dei pixel del colore del pallone (giallo del Mikasa giallo/blu), ridimensionata
 export function ballColorMask(src, sw, sh, channels, dw, dh, kind = 'yellow') {
-  const out = new Uint8Array(dw * dh);
   if (kind !== 'yellow') return null;
+  const out = new Uint8Array(dw * dh);
+  if (sw === dw && sh === dh) {
+    for (let i = 0, j = 0; i < dw * dh; i++, j += channels) {
+      const r = src[j], g = src[j + 1];
+      if (r > 110 && g > 105) { const b = src[j + 2]; if ((r < g ? r : g) - b > 35 && (r > g ? r - g : g - r) < 70) out[i] = 1; }
+    }
+    return out;
+  }
   const fx = sw / dw, fy = sh / dh;
   for (let y = 0; y < dh; y++) {
     const y0 = Math.floor(y * fy), y1 = Math.max(y0 + 1, Math.floor((y + 1) * fy));
@@ -78,45 +89,68 @@ export function denoise(m, w, h) {
   return o;
 }
 
-// Componenti connesse (4-connessione, union-find). Restituisce blob con statistiche.
+// Componenti connesse (4- o 8-connessione) per segmenti di riga: si lavora sulle sequenze di
+// pixel accesi invece che pixel per pixel (molto più veloce sulle maschere sparse).
+// Restituisce i blob con statistiche, nell'ordine in cui compaiono nella scansione.
+let _rs = new Int32Array(0), _re = new Int32Array(0), _ry = new Int32Array(0), _rl = new Int32Array(0), _par = new Int32Array(0);
 export function components(m, w, h, minArea = 1, conn8 = false) {
-  const lab = new Int32Array(m.length);
-  const parent = [0];
-  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-  let next = 1;
+  // 1) segmenti di riga
+  let nr = 0;
+  const grow = () => {
+    const k = Math.max(1024, _rs.length * 2);
+    const g = (a) => { const b = new Int32Array(k); b.set(a); return b; };
+    _rs = g(_rs); _re = g(_re); _ry = g(_ry); _rl = g(_rl); _par = g(_par);
+  };
+  const rowStart = new Int32Array(h + 1);
   for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (!m[i]) continue;
-      const nb = [x > 0 ? lab[i - 1] : 0, y > 0 ? lab[i - w] : 0];
-      if (conn8 && y > 0) { if (x > 0) nb.push(lab[i - w - 1]); if (x < w - 1) nb.push(lab[i - w + 1]); }
-      const ls = nb.filter(Boolean);
-      if (!ls.length) { lab[i] = next; parent.push(next); next++; continue; }
-      const roots = ls.map(find);
-      const r = Math.min(...roots);
-      lab[i] = r;
-      for (const q of roots) if (q !== r) parent[q] = r;
+    rowStart[y] = nr;
+    const row = y * w;
+    let x = 0;
+    while (x < w) {
+      if (!m[row + x]) { x++; continue; }
+      const a = x;
+      while (x < w && m[row + x]) x++;
+      if (nr >= _rs.length) grow();
+      _rs[nr] = a; _re[nr] = x - 1; _ry[nr] = y; nr++;
     }
   }
+  rowStart[h] = nr;
+  if (!nr) return [];
+  const rs = _rs, re = _re, ry = _ry, par = _par;
+  for (let i = 0; i < nr; i++) par[i] = i;
+  const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  // 2) unione con i segmenti sovrapposti della riga precedente
+  const d = conn8 ? 1 : 0;
+  for (let y = 1; y < h; y++) {
+    let j = rowStart[y - 1];
+    const jEnd = rowStart[y];
+    for (let i = rowStart[y]; i < rowStart[y + 1]; i++) {
+      const a = rs[i] - d, b = re[i] + d;
+      while (j < jEnd && re[j] < a) j++;
+      for (let k = j; k < jEnd && rs[k] <= b; k++) {
+        const p = find(i), q = find(k);
+        if (p !== q) { if (p < q) par[q] = p; else par[p] = q; }
+      }
+    }
+  }
+  // 3) statistiche per componente (radice = segmento più in alto a sinistra)
   const stats = new Map();
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (!lab[i]) continue;
-      const r = find(lab[i]);
-      let s = stats.get(r);
-      if (!s) stats.set(r, (s = { area: 0, sx: 0, sy: 0, x0: x, y0: y, x1: x, y1: y }));
-      s.area++; s.sx += x; s.sy += y;
-      if (x < s.x0) s.x0 = x; if (x > s.x1) s.x1 = x; if (y < s.y0) s.y0 = y; if (y > s.y1) s.y1 = y;
-    }
-  }
   const out = [];
-  for (const s of stats.values()) {
-    if (s.area < minArea) continue;
-    const bw = s.x1 - s.x0 + 1, bh = s.y1 - s.y0 + 1;
-    out.push({ area: s.area, x: s.sx / s.area, y: s.sy / s.area, x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1, w: bw, h: bh, fill: s.area / (bw * bh) });
+  for (let i = 0; i < nr; i++) {
+    const r = find(i);
+    let st = stats.get(r);
+    if (!st) { st = { area: 0, sx: 0, sy: 0, x0: rs[i], y0: ry[i], x1: re[i], y1: ry[i] }; stats.set(r, st); out.push(st); }
+    const len = re[i] - rs[i] + 1;
+    st.area += len; st.sx += (rs[i] + re[i]) * len / 2; st.sy += ry[i] * len;
+    if (rs[i] < st.x0) st.x0 = rs[i]; if (re[i] > st.x1) st.x1 = re[i]; if (ry[i] > st.y1) st.y1 = ry[i];
   }
-  return out;
+  const res = [];
+  for (const st of out) {
+    if (st.area < minArea) continue;
+    const bw = st.x1 - st.x0 + 1, bh = st.y1 - st.y0 + 1;
+    res.push({ area: st.area, x: st.sx / st.area, y: st.sy / st.area, x0: st.x0, y0: st.y0, x1: st.x1, y1: st.y1, w: bw, h: bh, fill: st.area / (bw * bh) });
+  }
+  return res;
 }
 
 // Elaborazione di un fotogramma: candidati palla (oggetti piccoli e compatti in

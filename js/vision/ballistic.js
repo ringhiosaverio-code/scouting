@@ -217,3 +217,27 @@ export function segmentFlights(P, obs, opts = {}) {
   segs.length = 0; segs.push(...good);
   return { segs, events };
 }
+
+// Volo che termina (o inizia) in un punto noto A all'istante ta: si stima solo la velocità in A.
+// X(t) = A + v (t - ta) - g/2 (t - ta)^2 ez  -> sistema lineare in v (3 incognite), ben condizionato.
+// Serve a ricostruire voli visti male (es. battuta dal fondo lontano) dal punto in cui finiscono.
+export function fitFlightThrough(P, obs, ta, A) {
+  if (obs.length < 3) return null;
+  const rows = [], rhs = [];
+  for (const o of obs) {
+    const d = o.t - ta, c = -0.5 * G * d * d;
+    for (const [row, val] of [[P[0], o.x], [P[1], o.y]]) {
+      const a = [row[0] - val * P[2][0], row[1] - val * P[2][1], row[2] - val * P[2][2], row[3] - val * P[2][3]];
+      rows.push([a[0] * d, a[1] * d, a[2] * d]);
+      rhs.push(-(a[0] * A[0] + a[1] * A[1] + a[2] * (A[2] + c) + a[3]));
+    }
+  }
+  const v = solveLS(rows, rhs);
+  if (!v) return null;
+  // in forma standard (p0 all'istante ta, v0 = v) per usare posAt/velAt
+  const f = { t0: ta, p0: [...A], v0: v };
+  let sse = 0;
+  for (const o of obs) { const q = project(P, posAt(f, o.t)); sse += Math.min((q[0] - o.x) ** 2 + (q[1] - o.y) ** 2, 36); }
+  f.rms = Math.sqrt(sse / obs.length);
+  return f;
+}

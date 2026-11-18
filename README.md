@@ -111,12 +111,21 @@ quelli del lato vicino). Senza i punti della rete l'analisi funziona in modalit�
 molto meno precisa: serve soprattutto a trovare gli scambi e i tempi morti.
 
 **Prova su un video reale** (10 battute riprese da telecamera fissa dietro il fondo
-campo, 720p): la calibrazione automatica trova i 10 punti del campo entro 2,5 px da
-quelli ricavati a mano, in circa 2 s; la rete stimata cade entro 5 px dal nastro vero.
-Delle 10 battute, 7 vengono rilevate al momento giusto (entro 0,3 s dal contatto),
-1 è sbagliata (il lancio della palla al battitore) e 2 non vengono viste (battute dal
-lato lontano). Ricezione, alzata, attacco ed esito su video reale **non sono ancora
-affidabili**: vanno sempre rivisti.
+campo, 720p, senza nessun punto cliccato): la calibrazione automatica trova i 10 punti
+del campo entro 2,5 px da quelli ricavati a mano, in circa 2 s; la rete stimata cade
+entro 5 px dal nastro vero. Battute: **8 su 8 dal lato vicino** rilevate al momento
+giusto (anche quando il battitore è fuori inquadratura) e **1 su 2 dal lato lontano**,
+ricostruita all'indietro (l'altra è in uno spezzone che finisce subito dopo la
+ricezione); in più 1 falso scambio da un solo tocco. Ricezione, alzata, attacco ed
+esito su video reale **non sono ancora affidabili**: vanno sempre rivisti.
+
+**Battute non viste, ricostruite con la fisica**: la palla della battuta dal fondo
+lontano è minuscola e va verso la telecamera, quindi il suo volo da solo è ambiguo in
+profondità. Ma termina nella ricezione, ben visibile: fissando quel punto (posizione e
+istante) si stima solo la velocità d'arrivo, un problema lineare ben condizionato, e
+si percorre il volo all'indietro fino a dietro la linea di fondo. La battuta viene
+accettata solo se fisicamente plausibile (altezza, velocità, provenienza) ed è
+segnalata per la revisione.
 
 ## Come si usa
 

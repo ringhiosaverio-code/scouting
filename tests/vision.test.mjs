@@ -106,3 +106,26 @@ test('calibrazione automatica dalle linee (campo sintetico) + telecamera 3D senz
   const e = Math.hypot(q[0] - truth.ntl.x * 960, q[1] - truth.ntl.y * 540);
   assert.ok(e < 6, `rete: errore ${e.toFixed(1)} px`);
 });
+
+test('battuta ricostruita all\'indietro dalla ricezione (fondo lontano)', async () => {
+  const { reconstructServe } = await import('../js/vision/rally.js');
+  const { fitFlight } = await import('../js/vision/ballistic.js');
+  const P = cameraMatrix(P3, P2);
+  const tr = clip.rallies.find((r) => r.kind === 'out'); // battuta dal fondo lontano, ricezione vicina
+  const serveT = tr.touches[0].t, recT = tr.touches[1].t;
+  let k = 7;
+  const noise = () => { k = (k * 1103515245 + 12345) % 2147483648; return (k / 2147483648 - 0.5); };
+  const obsAt = (t) => { const b = tr.path.at(t); const q = clip.cam.project(b); return { t, x: q.x * sx + noise(), y: q.y * sx + noise() }; };
+  // il volo della battuta si vede solo da metà in poi (all'inizio la palla lontana sfugge)
+  const pts = [];
+  for (let t = serveT + 0.45; t < recT - 0.02; t += 1 / 30) pts.push(obsAt(t));
+  const after = [];
+  for (let t = recT + 0.04; t < recT + 0.9; t += 1 / 30) after.push(obsAt(t));
+  const s0 = { ...fitFlight(P, after), t0: after[0].t };
+  s0.fit = fitFlight(P, after);
+  const rec = reconstructServe(P, [...pts, ...after], s0);
+  assert.ok(rec, 'battuta ricostruita');
+  assert.ok(Math.abs(rec.reception.t - recT) < 0.1, `istante ricezione ${rec.reception.t.toFixed(2)} (vero ${recT})`);
+  assert.ok(Math.abs(rec.serve.t - serveT) < 0.2, `istante battuta ${rec.serve.t.toFixed(2)} (vero ${serveT})`);
+  assert.ok(Math.abs(rec.serve.X[0] - tr.touches[0].pos[0]) < 1.0 && rec.serve.X[1] > 17.5, `punto di battuta ${rec.serve.X.map((v) => v.toFixed(1))} (vero ${tr.touches[0].pos})`);
+});

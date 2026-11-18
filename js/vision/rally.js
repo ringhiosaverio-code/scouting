@@ -3,12 +3,50 @@
 //  - 3D: calibrazione con il bordo della rete -> traiettorie balistiche 3D (precisa)
 //  - 2D: solo omografia del pavimento -> tocchi dai cambi di traiettoria nell'immagine
 import { buildTracks, buildChains, detectRallies as detect2D } from './tracker.js';
-import { segmentFlights, posAt, velAt, project } from './ballistic.js';
+import { segmentFlights, posAt, velAt, project, fitFlightThrough } from './ballistic.js';
 import { applyH, xy2zone, xy2subzone, xy2serveZone, flipXY } from '../lib/court.js';
 import { ATTACK_TABLE, SIMPLIFIED_ATTACKS, ATTACK_EVAL_FROM_DIG, SERVE_EVAL_FROM_RECEPTION, other } from '../lib/constants.js';
 
 const NET_Y = 9;
 const sideOf = (X) => (X[1] < NET_Y ? 'near' : 'far');
+
+// ---------- battuta ricostruita all'indietro ----------
+// La palla della battuta dal fondo lontano è piccola e va verso la telecamera: il suo volo è mal
+// condizionato. Ma termina nella ricezione, ben visibile: vincolando il volo a passare per il punto
+// di ricezione si stima la velocità d'arrivo e lo si percorre all'indietro fino a dietro la linea di fondo.
+export function reconstructServe(P, pts, s0) {
+  const pre = pts.filter((q) => q.t < s0.t0 - 0.02);
+  if (pre.length < 8) return null;
+  let best = null;
+  for (let ta = s0.t0 - 0.16; ta <= s0.t0 + 1e-6; ta += 0.02) {
+    const A = posAt(s0.fit, ta);
+    if (A[2] < -0.3 || A[2] > 3.6) continue;
+    for (const n of [8, 12, 16, 20, 25, pre.length]) {
+      const obs = pre.slice(-n);
+      if (obs.length < 8) continue;
+      const f = fitFlightThrough(P, obs, ta, A);
+      if (f && (!best || f.rms < best.f.rms)) best = { f, ta, A, obs };
+    }
+  }
+  if (!best || best.f.rms > 2.6) return null;
+  const { f, ta, A, obs } = best;
+  const far = A[1] < NET_Y; // ricezione nel campo vicino -> battuta dal fondo lontano
+  // all'indietro fino a dietro la linea di fondo della metà opposta
+  let tb = null;
+  for (let t = obs[0].t; t > obs[0].t - 1.6; t -= 0.01) {
+    const q = posAt(f, t);
+    if (far ? q[1] >= 18.5 : q[1] <= -0.5) { tb = t; break; }
+  }
+  if (tb == null) return null;
+  const X = posAt(f, tb), v = velAt(f, tb);
+  const speed = Math.hypot(...v);
+  if (X[2] < 1.5 || X[2] > 4.2 || speed < 7 || speed > 40 || (far ? v[1] > -4 : v[1] < 4)) return null;
+  return {
+    serve: { t: tb, X, vin: null, vout: v, kind: 'touch', side: sideOf(X), speedOut: speed, conf: 0.45, virtual: true, reconstructed: true },
+    reception: { t: ta, X: A, vin: velAt(f, ta), vout: velAt(s0.fit, ta), kind: 'touch', side: sideOf(A), conf: 0.6 },
+    rms: f.rms,
+  };
+}
 
 // ---------- estrazione degli scambi ----------
 // Riquadro (normalizzato 0..1) del giocatore che tocca: la sagoma i cui piedi sono più vicini
@@ -78,6 +116,15 @@ export function extractRallies3D(frames, P, opts = {}) {
       }
       { virt = { t: sg.t0 - 0.02, X: pp, vin: null, vout: vv, kind: 'touch', side: sideOf(pp), speedOut: Math.hypot(...vv), conf: 0.6, virtual: true }; break; }
     }
+    // nessuna battuta visibile: si prova a ricostruirla all'indietro dalla ricezione
+    if (!virt && firstServe < 0) {
+      const rec = reconstructServe(P, ch.pts, s0);
+      if (rec) {
+        const k = ev.findIndex((e) => e.t > rec.reception.t + 0.05);
+        ev.splice(0, k < 0 ? ev.length : k, rec.serve, rec.reception);
+        firstServe = 0;
+      }
+    }
     if (virt) {
       const k = ev.findIndex((e) => e.t > virt.t + 0.05);
       ev.splice(0, k < 0 ? ev.length : k, virt);
@@ -146,7 +193,7 @@ export function extractRallies2D(frames, Hpx, opts = {}) {
 
 const r3 = (v) => (v == null ? v : +v.toFixed(3));
 function roundTouch(e) {
-  return { t: r3(e.t), X: e.X.map(r3), kind: e.kind, side: e.side, conf: r3(e.conf ?? 0.5), speedOut: r3(e.speedOut ?? null), virtual: !!e.virtual, missing: !!e.missing, vout: e.vout ? e.vout.map(r3) : null, box: e.box || null };
+  return { t: r3(e.t), X: e.X.map(r3), kind: e.kind, side: e.side, conf: r3(e.conf ?? 0.5), speedOut: r3(e.speedOut ?? null), virtual: !!e.virtual, missing: !!e.missing, reconstructed: !!e.reconstructed, vout: e.vout ? e.vout.map(r3) : null, box: e.box || null };
 }
 
 function mergeOverlapping(rallies) {
@@ -354,6 +401,7 @@ export function interpretRally(rally, ctx) {
     events.push({ kind: 'skill', team: rt, num: ctx.rank ? ctx.rank(rt, 'R', z) : null, skill: 'R', ev: '=', type: seq[0].e.type, combo: null, target: null, sz: seq[0].e.sz, ez: z, esz: xy2subzone(L.x, L.y), stype: null, nb: null, special: null, custom: '', end: L, vt: +(rally.landing.t + (ctx.vtOffset || 0)).toFixed(2), auto: { conf: 0.5 } });
   }
   if (winner) events.push({ kind: 'point', team: winner, vt: +((rally.landing?.t ?? rally.end) + (ctx.vtOffset || 0)).toFixed(2) });
+  if (T[0]?.reconstructed) notes.push(`Battuta non vista, ricostruita all'indietro dalla traiettoria (${T[0].t.toFixed(1)} s): verificare`);
   for (const s of seq) if (s.inferred) notes.push(`Alzata non vista, dedotta (${s.tc.t.toFixed(1)} s): verificare`);
   for (const s of seq) if (s.tc.missing) notes.push(`Possibile tocco non visto prima di ${s.e.skill} (${s.tc.t.toFixed(1)} s)`);
   const conf = seq.reduce((a, s) => a * Math.max(0.3, s.tc.conf ?? 0.5), 1) ** (1 / seq.length);

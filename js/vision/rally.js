@@ -145,7 +145,7 @@ export function extractRallies3D(frames, P, opts = {}) {
       if (prev && gapT > -0.1 && gapT < (opts.resumeGap ?? 2.0) && (!prev.landing || prev.landing.extrapolated)) {
         const resume = { t: s0.t0 - 0.02, X: p, vin: null, vout: v, kind: 'touch', side: sideOf(p), speedOut: Math.hypot(...v), conf: 0.35, virtual: true, missing: true };
         const more = [resume, ...ev.filter((e) => e.t > s0.t0 + 0.05)];
-        if (opts.W) for (const e of more) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); }
+        if (opts.W) for (const e of more) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); e.foot = [+(q[0] / opts.W).toFixed(4), +(q[1] / opts.H).toFixed(4)]; }
         const landing = findLanding(more, segs);
         prev.touches.push(...more.map(roundTouch));
         prev.landing = landing;
@@ -156,7 +156,7 @@ export function extractRallies3D(frames, P, opts = {}) {
       continue; // altrimenti: palleggi, riscaldamento, palla raccolta
     }
     const landing = findLanding(ev, segs);
-    if (opts.W) for (const e of ev) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); }
+    if (opts.W) for (const e of ev) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); e.foot = [+(q[0] / opts.W).toFixed(4), +(q[1] / opts.H).toFixed(4)]; }
     const t1 = landing ? landing.t + 0.3 : segs[segs.length - 1].t1;
     prev = { start: ev[0].t, end: landing ? landing.t : segs[segs.length - 1].t1, touches: ev.map(roundTouch), landing, mode: '3d', path: pathOf(ch, ev[0].t - 1, t1), obsEnd: segs[segs.length - 1].t1 };
     out.push(prev);
@@ -193,7 +193,7 @@ export function extractRallies2D(frames, Hpx, opts = {}) {
 
 const r3 = (v) => (v == null ? v : +v.toFixed(3));
 function roundTouch(e) {
-  return { t: r3(e.t), X: e.X.map(r3), kind: e.kind, side: e.side, conf: r3(e.conf ?? 0.5), speedOut: r3(e.speedOut ?? null), virtual: !!e.virtual, missing: !!e.missing, reconstructed: !!e.reconstructed, vout: e.vout ? e.vout.map(r3) : null, box: e.box || null };
+  return { t: r3(e.t), X: e.X.map(r3), kind: e.kind, side: e.side, conf: r3(e.conf ?? 0.5), speedOut: r3(e.speedOut ?? null), virtual: !!e.virtual, missing: !!e.missing, reconstructed: !!e.reconstructed, vout: e.vout ? e.vout.map(r3) : null, box: e.box || null, foot: e.foot || null };
 }
 
 function mergeOverlapping(rallies) {

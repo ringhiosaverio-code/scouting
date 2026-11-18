@@ -73,7 +73,7 @@ export function prepareJersey(src, w, h, channels = 4, targetH = 40) {
   }
   // due cifre fuse in una sola macchia (piccole e sfocate): si riconoscono dalla larghezza
   const nDigits = ds.length === 1 && bw > bh * 1.05 ? 2 : ds.length;
-  return { gray: out, w: W2, h: H2, nDigits };
+  return { gray: out, w: W2, h: H2, nDigits, srcH: bh };
 }
 
 // Immagine PGM (supportata da Tesseract/Leptonica) da un buffer in scala di grigi

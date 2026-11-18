@@ -156,3 +156,41 @@ test('telecamera laterale: calibrazione automatica e analisi degli scambi', asyn
     serving = o.winner;
   });
 });
+
+test('giocatori: galleria registrata a mano, riconoscimento e apprendimento dalle correzioni', async () => {
+  const { describe, identify, emptyGallery, learn, splitSilhouette } = await import('../js/vision/playerid.js');
+  const { playerPos } = await import('../tools/synth.mjs');
+  const W2 = 1280, H2 = 720, w = 640, h = 360;
+  const c2 = makeMatchClip({ W: W2, H: H2 });
+  const bg2 = medianImage(Array.from({ length: 20 }, (_, k) => toGray(c2.frameAt((k + 0.5) * c2.duration / 20), W2, H2, 3, w, h)));
+  const truthAt = (t) => { let R = c2.rallies[0]; for (const r of c2.rallies) if (t >= r.path.start - 2) R = r; return R.players.map((p) => { const pos = playerPos(p, t); const f = c2.cam.project([pos[0], pos[1], 0]); return { num: p.number, side: p.side, cx: f.x, y1: f.y }; }); };
+  const sil = (t) => {
+    const img = c2.frameAt(t), cur = toGray(img, W2, H2, 3, w, h);
+    const r = processFrame({ cur, bg: bg2, w, h, opts: { playerMinArea: Math.round(w * h * 0.0008) } });
+    const isFg = (x, y) => { const i = Math.min(h - 1, Math.floor(y / 2)) * w + Math.min(w - 1, Math.floor(x / 2)); return Math.abs(cur[i] - bg2[i]) > 30; };
+    return { img, boxes: r.players.map((p) => [p.x0 * 2, p.y0 * 2, (p.x1 + 1) * 2, (p.y1 + 1) * 2]).flatMap((b) => splitSilhouette(img, W2, H2, 3, b, isFg)) };
+  };
+  const owner = (b, tr) => { const cx = (b[0] + b[2]) / 2; const m = tr.filter((q) => Math.abs(q.cx - cx) < (b[2] - b[0]) / 2 + 4 && Math.abs(q.y1 - b[3]) < 20); return m.length === 1 ? m[0] : null; };
+  // le sagome fuse vengono separate: al fotogramma iniziale si trovano almeno 8 giocatori singoli
+  const g = { near: emptyGallery(), far: emptyGallery() };
+  const s0 = sil(1), tr0 = truthAt(1);
+  let reg = 0;
+  for (const b of s0.boxes) { const o = owner(b, tr0); if (o) { learn(g[o.side], null, o.num, describe(s0.img, W2, H2, 3, b), { source: 'manual' }); reg++; } }
+  assert.ok(reg >= 6, `registrati ${reg}`);
+  // poi: riconoscimento con correzioni dello scout; un errore corretto non si ripete
+  const wrongBy = new Map();
+  let ok = 0, ko = 0;
+  for (let t = 12; t < c2.duration; t += 2.9) {
+    const { img, boxes } = sil(t), tr = truthAt(t);
+    for (const b of boxes) {
+      const o = owner(b, tr); if (!o) continue;
+      const d = describe(img, W2, H2, 3, b);
+      const r = identify(g[o.side], d, tr.filter((q) => q.side === o.side).map((q) => q.num));
+      if (r[0].p >= 0.5) { if (r[0].num === o.num) ok++; else { ko++; wrongBy.set(o.num, (wrongBy.get(o.num) || 0) + 1); } }
+      learn(g[o.side], r, o.num, d, { source: r[0].num === o.num ? 'auto' : 'manual' });
+    }
+  }
+  assert.ok(ok >= 30, `riconosciuti ${ok}`);
+  assert.ok(ko <= 3, `errori ${ko}`);
+  for (const [n, k] of wrongBy) assert.ok(k <= 1, `#${n} sbagliato ${k} volte dopo la correzione`);
+});

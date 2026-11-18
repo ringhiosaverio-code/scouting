@@ -9,6 +9,7 @@ import { interpretTyped, describe, skillCode, parseSkillCode, rallyWinner, attac
 import { uid, setterPosition, defaultSetter, liberos } from '../lib/engine.js';
 import { rankPlayers, rankCombos } from '../lib/predict.js';
 import { autoCalibrateVideo } from '../vision/analyzer.js';
+import { startPlayerRegistration } from './players.js';
 import { cameraFromHomography } from '../vision/camera.js';
 import { project as project3 } from '../vision/ballistic.js';
 import { computeHomography, receptionEvalFromDV, RECEPTION_ZONES } from '../lib/court.js';
@@ -62,6 +63,7 @@ export function createScout(app) {
     h('button', { class: 'btn', title: 'Apri un file video dal PC', onclick: () => app.openVideo() }, '📂 Video'),
     h('button', { class: 'btn', title: 'Video da link (YouTube, MEGA, Drive, Dropbox, MP4…) senza scaricarlo', onclick: () => app.openVideoLink() }, '🔗 Link'),
     h('button', { class: 'btn', title: 'Calibra il campo sul video', onclick: () => startCalibration() }, '📐 Calibra'),
+    h('button', { class: 'btn', title: 'Indica chi è chi sul video: l\'analisi automatica riconoscerà i giocatori e imparerà dalle correzioni', onclick: () => { if (app.match.settings.clickSurface === 'court') setSurface('video'); startPlayerRegistration(app, { onDone: () => render() }); } }, '👕 Giocatori'),
     surfaceBtn);
 
   const codeInput = h('input', {

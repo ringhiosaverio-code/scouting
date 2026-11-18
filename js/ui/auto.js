@@ -1,6 +1,8 @@
 // Analisi automatica del video: rilevamento di scambi e tocchi, proposta dei
 // codici di scouting, revisione rapida (accetta / correggi / scarta).
 import { h, s, clear, toast, fmtTime, confirmDialog } from './dom.js';
+import { galleryOf, galleryCount, describeTouch } from './players.js';
+import { identify, learn } from '../vision/playerid.js';
 import { captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
 import { interpretRally } from '../vision/rally.js';
 import { calibrationPairs3D, buildCalibration } from '../lib/court.js';
@@ -151,17 +153,19 @@ export function createAuto(app) {
 
   // ---------- lettura dei numeri di maglia (OCR, sperimentale) ----------
   let ocrVideo = null;
-  async function readNumbers() {
+  const galleryReady = () => app.videoInfo?.pixels && (galleryCount(app.match, '*') > 0 || galleryCount(app.match, 'a') > 0);
+  async function readNumbers({ quiet = false } = {}) {
     const ra = rallies()[selIndex];
-    if (!ra || !proposal || !video.currentSrc) return;
+    const prop = proposal;
+    if (!ra || !prop || !video.currentSrc) return;
     if (!ocrVideo || ocrVideo.src !== video.currentSrc) {
       ocrVideo = document.createElement('video');
       ocrVideo.muted = true; ocrVideo.preload = 'auto'; corsFor(ocrVideo, video.currentSrc); ocrVideo.src = video.currentSrc;
       await new Promise((r) => ocrVideo.addEventListener('loadeddata', r, { once: true }));
     }
-    const skills = proposal.events.filter((e) => e.kind === 'skill');
+    const skills = prop.events.filter((e) => e.kind === 'skill');
     const results = [];
-    toast('Lettura dei numeri di maglia…');
+    if (!quiet) toast('Riconoscimento dei giocatori…');
     for (let k = 0; k < ra.touches.length && k < skills.length; k++) {
       const tc = ra.touches[k], e = skills[k];
       if (!tc.box) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
@@ -169,6 +173,26 @@ export function createAuto(app) {
       const cur = app.rp.current;
       const valid = new Set([...(cur ? cur.pos[e.team] : []), ...app.match.teams[e.team].players.filter((p) => p.role === 'L').map((p) => Number(p.number))]);
       const boxH = (tc.box[3] - tc.box[1]) * (ocrVideo.videoHeight || 0);
+      // galleria della squadra (giocatori registrati e correzioni precedenti): confronto diretto
+      if (galleryCount(app.match, e.team) > 0 && boxH >= 40) {
+        const desc = await describeTouch(ocrVideo, tc.t, tc.box, tc.foot);
+        const zone = e.skill === 'R' || e.skill === 'D' ? e.ez ?? e.sz : e.sz;
+        const prior = new Map(rankPlayers(app.match, cur, app.learner, e.team, e.skill, zone).map((r) => [r.num, r.p]));
+        const ranking = identify(galleryOf(app.match, e.team), desc, [...valid], prior);
+        const top = ranking[0];
+        (prop.pid ||= {})[k] = { desc, ranking, proposed: e.num };
+        // si cambia la proposta solo se il numero è stato davvero riconosciuto (sagoma del numero);
+        // con la sola rotazione resta quella di partenza
+        if (top && top.p >= 0.5 && (top.num === e.num || (top.tpl ?? 0) >= 0.75)) {
+          const old = e.num;
+          e.num = top.num;
+          prop.pid[k].proposed = e.num;
+          e.auto = { ...(e.auto || {}), pid: Math.round(top.p * 100) };
+          const why = top.tpl != null && top.tpl > 0.55 ? 'numero riconosciuto' : 'posizione e aspetto';
+          results.push({ k, msg: old === e.num ? `confermato #${e.num} (${Math.round(top.p * 100)}%, ${why})` : `riconosciuto #${e.num} (${Math.round(top.p * 100)}%, ${why}), proposto era #${old}` });
+        } else results.push({ k, msg: `incerto: #${top?.num ?? '?'} ${Math.round((top?.p || 0) * 100)}% — conferma o correggi, l'app impara` });
+        continue;
+      }
       if (boxH < (app.match.settings.ocrMinPx || 90)) { results.push({ k, msg: 'giocatore troppo piccolo nell\'immagine' }); continue; }
       let best = null;
       // più istanti prima del contatto: il giocatore può essere girato o coperto
@@ -189,8 +213,8 @@ export function createAuto(app) {
         results.push({ k, msg: old === e.num ? `confermato #${e.num} (${best.conf}%)` : `letto #${e.num} (${best.conf}%), proposto era #${old}` });
       } else results.push({ k, msg: 'numero non leggibile' });
     }
-    proposal.text = proposal.events.map(tokenOf).join(' ');
-    proposal.ocr = results;
+    prop.text = prop.events.map(tokenOf).join(' ');
+    prop.ocr = results;
     render();
   }
   function buildProposal(i) {
@@ -233,6 +257,20 @@ export function createAuto(app) {
     // ordine cronologico rispetto a quanto già scoutizzato
     const lastVt = [...app.match.events].reverse().find((e) => e.vt != null)?.vt ?? -1;
     if (!silent && ra.start < lastVt - 1 && !(await confirmDialog('Ordine degli scambi', 'Questo scambio è precedente all\'ultima azione già registrata: verrà aggiunto in coda. Continuare?', 'Aggiungi'))) return false;
+    // apprendimento: il numero finale (confermato o corretto dallo scout) entra nella galleria
+    if (proposal.pid) {
+      const fin = evs.filter((e) => e.kind === 'skill');
+      let learned = 0, corrected = 0, skipped = 0;
+      for (const [k, it] of Object.entries(proposal.pid)) {
+        const e = fin[+k];
+        if (!e || e.num == null || !it.desc) continue;
+        const ok = learn(galleryOf(app.match, e.team), it.ranking, Number(e.num), it.desc, { source: Number(e.num) !== it.proposed ? 'manual' : 'auto', t: ra.touches[+k]?.t });
+        if (!ok) { skipped++; continue; }
+        learned++; if (Number(e.num) !== it.proposed) corrected++;
+      }
+      if (corrected && !silent) toast(`Imparato da ${corrected} correzion${corrected === 1 ? 'e' : 'i'}: non ripeterà lo stesso errore su questi giocatori`, 'info', 4000);
+      if (skipped && !silent) toast(`${skipped} riquadr${skipped === 1 ? 'o inquadrava' : 'i inquadravano'} probabilmente un altro giocatore (numero diverso ben leggibile): non usat${skipped === 1 ? 'o' : 'i'} per imparare`, 'info', 5000);
+    }
     app.commit('Analisi automatica', (m) => {
       for (const e of evs) m.events.push({ ...e, id: uid() });
       const r = m.analysis.rallies.find((x) => x.id === ra.id);
@@ -261,6 +299,7 @@ export function createAuto(app) {
       selIndex = i;
       proposal = buildProposal(i);
       if (!proposal || proposal.notes.length || proposal.conf < minConf || !proposal.events.some((e) => e.kind === 'point')) { stopReason = proposal?.notes[0] || (proposal ? `affidabilità ${Math.round(proposal.conf * 100)}%` : 'set concluso'); break; }
+      if (galleryReady()) await readNumbers({ quiet: true });
       if (!(await accept(i, true))) break;
       n++;
       if (app.rp.current?.pendingEnd || app.rp.current?.over) break;
@@ -277,6 +316,8 @@ export function createAuto(app) {
     const ra = rallies()[i];
     if (video.currentSrc) { video.currentTime = Math.max(0, ra.start - 1.5); }
     render();
+    // giocatori registrati: riconoscimento automatico di chi tocca
+    if (proposal && galleryReady()) { const p0 = proposal; readNumbers({ quiet: true }).catch(() => {}); }
   }
   function playSel() {
     const ra = rallies()[selIndex];
@@ -351,7 +392,7 @@ export function createAuto(app) {
         h('button', { class: 'btn primary', disabled: ra.status === 'accepted', onclick: () => accept() }, '✓ Accetta (Invio)'),
         h('button', { class: 'btn', onclick: () => discard() }, 'Scarta'),
         h('button', { class: 'btn', onclick: () => { proposal = buildProposal(selIndex); render(); } }, '↺ Ripristina'),
-        h('button', { class: 'btn', title: 'Sperimentale: legge i numeri sulle maglie dei giocatori che toccano (scarica il motore OCR al primo uso)', onclick: () => readNumbers() }, '🔢 Leggi numeri di maglia'),
+        h('button', { class: 'btn', title: 'Riconosce chi tocca: galleria dei giocatori registrati (👕) + numeri di maglia', onclick: () => readNumbers() }, '👕 Riconosci giocatori'),
         h('button', { class: 'btn', onclick: () => acceptAll() }, '⏩ Accetta in serie gli scambi sicuri')),
       h('p', { class: 'muted small' }, 'Puoi modificare i codici prima di accettare (sintassi DataVolley; *p / ap per il punto).'));
   }

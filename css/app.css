@@ -319,3 +319,16 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .link-help { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .link-help li { line-height: 1.4; }
 .warn-box { background: color-mix(in srgb, #f0b429 18%, transparent); border: 1px solid #f0b429; border-radius: 6px; padding: 8px 10px; margin: 0; line-height: 1.45; }
+
+/* registrazione giocatori */
+.pid-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; cursor: crosshair; touch-action: none; }
+.pid-draw { fill: rgba(255, 255, 255, 0.12); stroke: #fff; stroke-dasharray: 4 3; }
+.pid-box { pointer-events: all; cursor: pointer; }
+.pid-box rect:first-child { fill: rgba(255, 255, 255, 0.06); stroke-width: 2; }
+.pid-box.done rect:first-child { stroke-width: 3; fill: rgba(80, 220, 120, 0.12); }
+.pid-box.todo rect:first-child { stroke-dasharray: 5 3; }
+.pid-box text { fill: #fff; font: 600 12px system-ui, sans-serif; paint-order: stroke; stroke: rgba(0, 0, 0, 0.55); stroke-width: 2px; }
+.pid-bar { z-index: 4; }
+.pid-pop { position: absolute; z-index: 5; width: 250px; background: var(--card); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; padding: 8px; display: grid; gap: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.pid-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pid-chip { min-width: 36px; justify-content: center; }

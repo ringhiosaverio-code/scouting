@@ -233,7 +233,7 @@ async function offerVideoReopen() {
   clear(box);
   const v = app.match.video;
   if (!v.name || app.video.currentSrc) return;
-  if (v.url && /^https?:/.test(v.url)) { app.video.src = v.url; return; }
+  if (v.url && !/^blob:/.test(v.url)) { app.video.src = v.url; return; }
   const fh = await getHandle('video:' + app.match.id);
   box.append(h('button', {
     class: 'btn small primary', onclick: async () => {
@@ -338,8 +338,17 @@ function init() {
   mountModules();
   app.setMatch(m);
   app.showTab(m.events.length ? 'scout' : 'setup');
+  // partita preparata (?partita=file.vsj oppure window.VSP_PRELOAD): caricata se non è già salvata nel browser
+  const pre = new URLSearchParams(location.search).get('partita') || window.VSP_PRELOAD;
+  if (pre) {
+    fetch(pre).then((r) => r.json()).then((pm) => {
+      const saved = loadMatch(pm.id);
+      app.setMatch(saved || pm);
+      app.showTab(window.VSP_PRELOAD_TAB || 'scout');
+    }).catch(() => toast('Impossibile caricare la partita preparata', 'error'));
+  }
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.VSP_NO_SW) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }

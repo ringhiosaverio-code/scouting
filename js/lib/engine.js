@@ -182,6 +182,15 @@ export function replay(match) {
         rows.push(row);
         break;
       }
+      case 'segment': {
+        // nuova sequenza in un video montato: chi batte (ed eventualmente lato) cambia senza punti
+        Object.assign(row, snap(st, setsWon));
+        rally = null;
+        if (e.serve) st.serving = e.serve;
+        if (e.homeNear != null) st.homeNear = e.homeNear;
+        rows.push(row);
+        break;
+      }
       case 'side': {
         Object.assign(row, snap(st, setsWon));
         st.homeNear = !st.homeNear;
@@ -246,7 +255,9 @@ export function ballOwnerFromRally(rallyRows, serving) {
 export function playerLookup(match) {
   const maps = { '*': new Map(), a: new Map() };
   for (const t of ['*', 'a']) for (const p of match.teams[t].players) maps[t].set(Number(p.number), p);
-  return (team, num) => maps[team]?.get(Number(num)) || null;
+  const fn = (team, num) => maps[team]?.get(Number(num)) || null;
+  fn.names = { '*': match.teams['*'].name, a: match.teams.a.name };
+  return fn;
 }
 
 export function liberos(match, team) {

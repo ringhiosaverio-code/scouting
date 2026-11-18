@@ -835,7 +835,7 @@ export function createScout(app) {
         h('td', {}, r.set ?? ''),
         h('td', { class: 'mono' }, e.kind === 'point' ? `${r.scoreAfter['*']}-${r.scoreAfter.a}` : (r.score ? `${r.score['*']}-${r.score.a}` : '')),
         h('td', { class: 'mono code', title: 'Doppio clic per modificare', ondblclick: () => editRow(r, tr) }, code),
-        h('td', { class: 'desc' }, iss ? h('span', { class: `issue ${iss[0].level}`, title: iss.map((x) => x.msg).join('\n') }, '⚠ ') : null, describe(e, lookup)),
+        h('td', { class: 'desc' }, iss ? h('span', { class: `issue ${iss[0].level}`, title: iss.map((x) => x.msg).join('\n') }, iss.some((x) => x.level !== 'info') ? '⚠ ' : 'ℹ ') : null, describe(e, lookup)),
         h('td', { class: 'mono' }, e.vt != null ? h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); seekTo(e.vt); } }, fmtTime(e.vt)) : (e.t || '')),
         h('td', { class: 'row-actions' },
           h('button', { class: 'icon-btn', title: 'Modifica', onclick: () => editRow(r, tr) }, '✎'),
@@ -862,6 +862,7 @@ export function createScout(app) {
       case 'endset': return `**${r.set}set`;
       case 'green': return `${e.team}$$&${e.type || 'H'}${e.ev}`;
       case 'side': return '<->';
+      case 'segment': return '--- sequenza';
       default: return '';
     }
   }

@@ -63,7 +63,11 @@ export function validate(match, rp) {
       if (e.skill === 'A' && k > 0 && rs[k - 1].e.skill !== 'E' && !['PP', 'P2', 'PR'].includes(e.combo)) add(rs[k], 'info', 'Attacco senza alzata');
       if (n && e.skill === 'E' && n.skill === 'A' && e.team !== n.team) add(rs[k + 1], 'warn', 'Attacco di squadra diversa da quella che ha alzato');
     }
-    if (ra.won == null && ra !== rl.at(-1)) add(rs[rs.length - 1], 'error', 'Rally senza assegnazione del punto');
+    if (ra.won == null && rs.length) {
+      const next = rp.rows[rs[rs.length - 1].i + 1];
+      if (next && next.e.kind === 'segment') add(rs[rs.length - 1], 'info', 'Scambio interrotto dal montaggio video (esito non visibile)');
+      else if (ra !== rl.at(-1)) add(rs[rs.length - 1], 'error', 'Rally senza assegnazione del punto');
+    }
     const term = rs.find((r) => r.phase);
     if (ra.won && rs.length && !term) add(rs[rs.length - 1], 'info', 'Punto senza azione conclusiva');
   }

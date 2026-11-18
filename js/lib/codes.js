@@ -239,7 +239,7 @@ export function completeSkill(e, ctx = {}) {
 // --------- descrizioni leggibili ---------
 export function describe(e, lookup = () => null) {
   if (!e) return '';
-  const tn = (t) => (t === '*' ? 'Casa' : 'Ospiti');
+  const tn = (t) => lookup?.names?.[t] || (t === '*' ? 'Casa' : 'Ospiti');
   switch (e.kind) {
     case 'point': return `Punto ${tn(e.team)}`;
     case 'timeout': return `Time-out ${tn(e.team)}`;
@@ -250,6 +250,7 @@ export function describe(e, lookup = () => null) {
     case 'lineup': return `Formazioni set ${e.set}`;
     case 'endset': return 'Fine set';
     case 'side': return 'Cambio campo';
+    case 'segment': return `Nuova sequenza (montaggio)${e.serve ? ` — batte ${tn(e.serve)}` : ''}${e.label ? `: ${e.label}` : ''}`;
     case 'green': return `Codice verde ${tn(e.team)} ${e.ev}`;
     case 'comment': return `Nota: ${e.text}`;
     case 'skill': {

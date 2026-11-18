@@ -227,3 +227,38 @@ export function calibrationPairs3D(points, netHeight = 2.43) {
   }
   return { p3, p2, has3D: REF_POINTS.some((r) => r.net && points[r.id]) };
 }
+
+// ---- Valutazione della ricezione (e della difesa) dalla posizione in cui il palleggiatore gioca la palla ----
+// Zone sul mezzo campo della squadra in ricezione (metri; d = distanza dalla rete,
+// lat = distanza dalla linea laterale sinistra di chi riceve, guardando la rete):
+//   #  0–1,4 m dalla rete, lat 4,0–7,4 m (vicino a rete, poco a destra del centro)
+//   +  fino a 2,3 m dalla rete, lat 2,2–8,7 m
+//   !  fino a 3,3 m dalla rete, lat 2,6–8,7 m
+//   -  altrove
+// Palla bassa (meno di 1,8 m quando il palleggiatore la gioca): un livello in meno.
+// "/" (palla che passa nell'altro campo) ed "=" (errore) si decidono dalla sequenza dei tocchi.
+export const RECEPTION_ZONES = [
+  { ev: '#', dMax: 1.4, latMin: 4.0, latMax: 7.4 },
+  { ev: '+', dMax: 2.3, latMin: 2.2, latMax: 8.7 },
+  { ev: '!', dMax: 3.3, latMin: 2.6, latMax: 8.7 },
+];
+const DOWNGRADE = { '#': '+', '+': '!', '!': '-', '-': '-' };
+
+// X, Y in metri (0..9, 0..18, rete a Y = 9); bottom = la squadra in ricezione occupa Y < 9
+export function receptionEvalAt(X, Y, bottom, z = null) {
+  const d = bottom ? 9 - Y : Y - 9;
+  const lat = bottom ? X : 9 - X;
+  if (d < -0.5) return '/';
+  let ev = '-';
+  for (const zn of RECEPTION_ZONES) {
+    if (d <= zn.dMax && lat >= zn.latMin && lat <= zn.latMax) { ev = zn.ev; break; }
+  }
+  if (z != null && z < 1.8) ev = DOWNGRADE[ev];
+  return ev;
+}
+
+// stessa regola in coordinate DataVolley canoniche (casa in basso)
+export function receptionEvalFromDV(p, team, z = null) {
+  if (!p) return null;
+  return receptionEvalAt((p.x - 0.5) * 3, (p.y - 0.5) * 3, team === '*', z);
+}

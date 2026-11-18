@@ -4,7 +4,7 @@
 //  - 2D: solo omografia del pavimento -> tocchi dai cambi di traiettoria nell'immagine
 import { buildTracks, buildChains, detectRallies as detect2D } from './tracker.js';
 import { segmentFlights, posAt, velAt, project, fitFlightThrough } from './ballistic.js';
-import { applyH, xy2zone, xy2subzone, xy2serveZone, flipXY } from '../lib/court.js';
+import { applyH, xy2zone, xy2subzone, xy2serveZone, flipXY, receptionEvalAt } from '../lib/court.js';
 import { ATTACK_TABLE, SIMPLIFIED_ATTACKS, ATTACK_EVAL_FROM_DIG, SERVE_EVAL_FROM_RECEPTION, other } from '../lib/constants.js';
 
 const NET_Y = 9;
@@ -316,10 +316,9 @@ export function interpretRally(rally, ctx) {
       else if (!n) s.ev = winner && winner !== s.team ? '=' : '-';
       else if (n.team !== s.team) s.ev = '/';
       else {
-        const tgt = setterSpot(s.tc.side);
-        const d = Math.hypot(n.tc.X[0] - tgt[0], n.tc.X[1] - tgt[1]);
-        s.ev = d < 1.2 ? '#' : d < 2.2 ? '+' : d < 3.5 ? '!' : '-';
-        s.dist = d;
+        // zone di valutazione: dove il palleggiatore gioca la palla (e a che altezza)
+        s.ev = receptionEvalAt(n.tc.X[0], n.tc.X[1], s.tc.side === 'near', n.tc.X[2]);
+        if (s.ev === '/') s.ev = '-';
       }
     }
   }

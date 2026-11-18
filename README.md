@@ -141,6 +141,23 @@ segnalata per la revisione.
    sotto il video. Puoi mescolare i due metodi in qualunque momento.
 4. **Report** e **Video analisi** per l'analisi; **DVW** / **CSV** per esportare.
 
+### Valutazione della ricezione
+
+La ricezione (e la difesa) si valuta da **dove il palleggiatore gioca la palla**, sul
+mezzo campo di chi riceve visto verso la rete:
+
+| | distanza dalla rete | dalla linea laterale sinistra |
+|---|---|---|
+| **#** | fino a 1,4 m | 4,0–7,4 m (poco a destra del centro) |
+| **+** | fino a 2,3 m | 2,2–8,7 m |
+| **!** | fino a 3,3 m | 2,6–8,7 m |
+| **−** | altrove | |
+
+Palla bassa (sotto 1,8 m quando la si alza): un livello in meno. **/** = la palla passa
+direttamente nell'altro campo dopo la ricezione; **=** = errore. Nello scouting a clic le
+zone compaiono sul campo durante il secondo tocco e la valutazione viene proposta dal
+clic dell'alzata; l'analisi automatica usa la stessa regola.
+
 ### Tasti principali
 
 | Tasto | Azione |

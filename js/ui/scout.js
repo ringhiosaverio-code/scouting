@@ -11,7 +11,7 @@ import { rankPlayers, rankCombos } from '../lib/predict.js';
 import { autoCalibrateVideo } from '../vision/analyzer.js';
 import { cameraFromHomography } from '../vision/camera.js';
 import { project as project3 } from '../vision/ballistic.js';
-import { computeHomography } from '../lib/court.js';
+import { computeHomography, receptionEvalFromDV, RECEPTION_ZONES } from '../lib/court.js';
 import {
   EVALS, EVAL_TEXT, SERVE_TYPES, TYPE_TEXT, SPECIAL, ATTACK_TABLE, SIMPLIFIED_ATTACKS, SETTER_CALLS,
   SERVE_EVAL_FROM_RECEPTION, ATTACK_EVAL_FROM_DIG, ROLES, SKILLS, other,
@@ -325,6 +325,7 @@ export function createScout(app) {
       case 'E': return { step: 'third', team: last.team };
       case 'A': case 'B': return { step: 'dig', team: owner, skill: 'D' };
       case 'F': return owner !== last.team ? { step: 'dig', team: owner, skill: 'F' } : { step: 'second', team: owner };
+      case 'R': case 'D': if (last.ev === '/') return { step: 'dig', team: owner, skill: 'D' }; return { step: 'second', team: owner };
       default: return { step: 'second', team: owner };
     }
   }
@@ -551,6 +552,7 @@ export function createScout(app) {
         title(app.match.settings.scoutSets ? 'Clicca il secondo tocco (alzata)' : 'Clicca il punto di attacco', t);
         panel.append(h('p', { class: 'muted' }, app.match.settings.scoutSets ? 'Posizione dell\'alzata. Invio = alzata del palleggiatore senza posizione.' : 'L\'alzata viene registrata automaticamente.'));
         panel.append(actBtn('Alzata senza posizione', () => { pend.second = { pt: null, vt: now() }; pauseForPopup(); render(); }, '', 'Enter'));
+        panel.append(overpassButton(t));
         panel.append(manualRallyButtons(t));
         return;
       }
@@ -559,10 +561,31 @@ export function createScout(app) {
       const rk = rank(t, 'E', zone);
       pend.setter ??= rk[0]?.num;
       pend.setEval ??= app.match.settings.defaultEval.E || '+';
+      // valutazione della ricezione/difesa dalla posizione dell'alzata (zone #, +, !)
+      const first = cur.lastSkill && cur.lastSkill.team === t && ['R', 'D', 'F'].includes(cur.lastSkill.skill) ? cur.lastSkill : null;
+      const sugg = first && pend.second.pt ? receptionEvalFromDV(pend.second.pt, t) : null;
+      if (pend.applyRecEval === undefined) pend.applyRecEval = true;
       const commitSet = (ev = pend.setEval) => {
         const E = sk(t, pend.setter, 'E', { ev, combo: pend.call || null, start: pend.second.pt || undefined, vt: pend.second.vt, ez: zone });
-        commitRows([E], ev === '=' ? 'Errore alzata' : 'Alzata');
+        const pre = sugg && sugg !== '/' && pend.applyRecEval && sugg !== first.ev ? (m) => {
+          const fe = m.events.find((e) => e.id === first.id);
+          if (!fe) return;
+          fe.ev = sugg;
+          // battuta complementare alla ricezione
+          if (fe.skill === 'R') {
+            const k = m.events.indexOf(fe);
+            const se = [...m.events.slice(0, k)].reverse().find((e) => e.kind === 'skill');
+            if (se && se.skill === 'S') se.ev = SERVE_EVAL_FROM_RECEPTION[sugg];
+          }
+        } : null;
+        commitRows([E], ev === '=' ? 'Errore alzata' : 'Alzata', pre);
       };
+      if (sugg && sugg !== '/') {
+        const name = { R: 'Ricezione', D: 'Difesa', F: 'Free ball' }[first.skill];
+        panel.append(h('label', { class: 'toggle rec-sugg' },
+          h('input', { type: 'checkbox', checked: pend.applyRecEval, onchange: (e) => { pend.applyRecEval = e.target.checked; } }),
+          ` ${name}: `, h('b', { class: 'mono' }, sugg), ` dalla posizione dell'alzata${first.ev !== sugg ? ` (era ${first.ev})` : ''}`));
+      }
       panel.append(
         section('Giocatore', playerChips(t, rk, pend.setter, (n) => { pend.setter = n; render(); })),
         section('Chiamata palleggiatore (facoltativa)', h('div', { class: 'chips' }, SETTER_CALLS.map((c) => h('button', { class: `chip small ${pend.call === c.code ? 'sel' : ''}`, onclick: () => { pend.call = pend.call === c.code ? null : c.code; render(); } }, h('b', {}, c.code), h('span', {}, c.description))))),
@@ -607,6 +630,23 @@ export function createScout(app) {
     }
   }
 
+  // ricezione/difesa che manda la palla direttamente nell'altro campo: valutazione "/"
+  function overpassButton(t) {
+    const first = state().lastSkill;
+    if (!first || first.team !== t || !['R', 'D'].includes(first.skill)) return null;
+    return actBtn(`${first.skill === 'R' ? 'Ricezione' : 'Difesa'} passata nell'altro campo (/)`, () => {
+      commitRows([], 'Palla passata', (m) => {
+        const fe = m.events.find((e) => e.id === first.id);
+        if (!fe) return;
+        fe.ev = '/';
+        if (fe.skill === 'R') {
+          const k = m.events.indexOf(fe);
+          const se = [...m.events.slice(0, k)].reverse().find((e) => e.kind === 'skill');
+          if (se && se.skill === 'S') se.ev = SERVE_EVAL_FROM_RECEPTION['/'];
+        }
+      });
+    }, '', 'p');
+  }
   function manualRallyButtons() {
     return h('div', { class: 'row gap wrap manual' },
       h('button', { class: 'btn small', onclick: () => manualPoint('*') }, `+1 ${teamName('*')}`),
@@ -717,11 +757,25 @@ export function createScout(app) {
   }
 
   // ---------- mini campo con formazioni ----------
+  // zone di valutazione della ricezione (#, +, !) sul mezzo campo della squadra che deve alzare
+  function drawRecZones(layer, team) {
+    for (const z of [...RECEPTION_ZONES].reverse()) {
+      // metri -> coordinate DV canoniche (casa in basso), poi SVG
+      const bottom = team === '*';
+      const x0 = bottom ? z.latMin : 9 - z.latMax, x1 = bottom ? z.latMax : 9 - z.latMin;
+      const y0 = bottom ? 9 - z.dMax : 9, y1 = bottom ? 9 : 9 + z.dMax;
+      const a = toSvg({ x: 0.5 + x0 / 3, y: 0.5 + y1 / 3 }), b = toSvg({ x: 0.5 + x1 / 3, y: 0.5 + y0 / 3 });
+      layer.appendChild(s('rect', { x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y, class: `rec-zone z${{ '#': 'hash', '+': 'plus', '!': 'excl' }[z.ev]}` }));
+      layer.appendChild(s('text', { x: b.x - 0.08, y: bottom ? b.y - 0.08 : a.y + 0.2, class: 'rec-zone-label' }, z.ev));
+    }
+  }
   function renderMiniCourt() {
     const layer = miniCourt.querySelector('.court-layer');
     clear(layer);
     const cur = state();
     if (!cur) return;
+    const fl = flow();
+    if (fl.step === 'second') drawRecZones(layer, fl.team);
     for (const t of ['*', 'a']) {
       const col = app.match.teams[t].colour;
       cur.pos[t].forEach((n, i) => {
@@ -742,6 +796,7 @@ export function createScout(app) {
     // grande campo (modalità campo)
     const big = bigCourt.querySelector('.court-layer');
     clear(big);
+    if (fl.step === 'second') drawRecZones(big, fl.team);
     for (const t of ['*', 'a']) cur.pos[t].forEach((n, i) => dot(big, positionXY(i + 1, t), { r: 0.17, cls: `lineup faint ${n === cur.setter[t] ? 'setter' : ''}`, colour: app.match.teams[t].colour, label: n }));
     for (const e of cur.rallyRows) {
       const col = app.match.teams[e.team].colour;

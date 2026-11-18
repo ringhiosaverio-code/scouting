@@ -166,3 +166,20 @@ test('predizione: battitore in P1, palleggiatore, apprendimento', () => {
   const rec = rankPlayers(m, rp.current, L, '*', 'R', 6);
   assert.equal(rec[0].num, 8); // libero al centro
 });
+
+test('valutazione ricezione dalle zone (posizione dell\'alzata)', async () => {
+  const { receptionEvalAt, receptionEvalFromDV } = await import('../js/lib/court.js');
+  // squadra in basso (Y < 9): rete a Y = 9, sinistra a X = 0
+  assert.equal(receptionEvalAt(5.5, 8.5, true), '#');      // 0,5 m dalla rete, poco a destra del centro
+  assert.equal(receptionEvalAt(5.5, 8.5, true, 1.5), '+'); // palla bassa: un livello in meno
+  assert.equal(receptionEvalAt(3.0, 7.5, true), '+');      // 1,5 m dalla rete, più a sinistra
+  assert.equal(receptionEvalAt(6.0, 6.2, true), '!');      // 2,8 m dalla rete
+  assert.equal(receptionEvalAt(6.0, 4.0, true), '-');      // 5 m dalla rete
+  assert.equal(receptionEvalAt(1.0, 8.5, true), '-');      // vicino a rete ma troppo a sinistra
+  assert.equal(receptionEvalAt(5.5, 10, true), '/');       // palla passata nell'altro campo
+  // squadra in alto: specchiato (la sua sinistra è X = 9)
+  assert.equal(receptionEvalAt(3.5, 9.5, false), '#');
+  assert.equal(receptionEvalAt(8.0, 9.5, false), '-');
+  // coordinate DataVolley canoniche: casa in basso
+  assert.equal(receptionEvalFromDV({ x: 0.5 + 5.5 / 3, y: 0.5 + 8.5 / 3 }, '*'), '#');
+});

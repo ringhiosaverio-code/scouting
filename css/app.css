@@ -302,3 +302,11 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .net-est.post { stroke-width: 1.5; }
 .net-est-label { fill: #ff7ad9; font: 600 12px system-ui, sans-serif; paint-order: stroke; stroke: #000; stroke-width: 3px; text-anchor: middle; }
 .banner .btn:not(.primary) { color: var(--text); }
+
+/* zone di valutazione della ricezione */
+.rec-zone { stroke: none; }
+.rec-zone.zhash { fill: rgba(20, 20, 20, 0.55); }
+.rec-zone.zplus { fill: rgba(60, 60, 60, 0.35); }
+.rec-zone.zexcl { fill: rgba(150, 150, 150, 0.35); }
+.rec-zone-label { fill: #fff; font-size: 0.22px; font-weight: 700; text-anchor: end; pointer-events: none; }
+.rec-sugg { display: flex; gap: 4px; margin: 4px 0 8px; padding: 6px 8px; border: 1px dashed var(--accent); border-radius: 6px; font-size: 12px; }

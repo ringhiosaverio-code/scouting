@@ -93,6 +93,7 @@ export function ballOwnerAfter(e, prev) {
       if (prev && prev.team === e.team && 'RDEF'.includes(prev.skill)) return other(e.team);
       if (prev && prev.team !== e.team) return e.team;
       return other(e.team);
+    case 'R': case 'D': return e.ev === '/' ? other(e.team) : e.team; // "/" = palla passata nell'altro campo
     default: return e.team;
   }
 }

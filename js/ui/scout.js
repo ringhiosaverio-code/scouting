@@ -35,7 +35,7 @@ export function createScout(app) {
   const bigCourt = courtSVG({ cls: 'court-svg big-court' });
   const emptyMsg = h('div', { class: 'video-empty' },
     h('p', {}, 'Nessun video caricato.'),
-    h('p', { class: 'muted' }, 'Apri un file video dal PC, incolla il link (YouTube, Drive, Dropbox, MP4) senza scaricarlo, oppure scoutizza dal vivo cliccando sul campo schematico.'),
+    h('p', { class: 'muted' }, 'Apri un file video dal PC, incolla il link (YouTube, MEGA, Drive, Dropbox, MP4) senza scaricarlo, oppure scoutizza dal vivo cliccando sul campo schematico.'),
     h('div', { class: 'row gap wrap' },
       h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 File dal PC'),
       h('button', { class: 'btn primary', onclick: () => app.openVideoLink() }, '🔗 Link video'),
@@ -60,7 +60,7 @@ export function createScout(app) {
     timeLbl, speedSel,
     h('span', { class: 'spacer' }),
     h('button', { class: 'btn', title: 'Apri un file video dal PC', onclick: () => app.openVideo() }, '📂 Video'),
-    h('button', { class: 'btn', title: 'Video da link (YouTube, Drive, Dropbox, MP4…) senza scaricarlo', onclick: () => app.openVideoLink() }, '🔗 Link'),
+    h('button', { class: 'btn', title: 'Video da link (YouTube, MEGA, Drive, Dropbox, MP4…) senza scaricarlo', onclick: () => app.openVideoLink() }, '🔗 Link'),
     h('button', { class: 'btn', title: 'Calibra il campo sul video', onclick: () => startCalibration() }, '📐 Calibra'),
     surfaceBtn);
 

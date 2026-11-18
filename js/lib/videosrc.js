@@ -2,6 +2,7 @@
 // nel PC), il browser lo riproduce in streaming.
 //
 //   youtube  → lettore YouTube incorporato (scouting manuale; analisi automatica non possibile)
+//   mega     → link mega.nz: streaming con decifratura nel service worker
 //   hls      → flusso .m3u8 (nativo su Safari, altrimenti con hls.js)
 //   direct   → file video raggiungibile via http(s): MP4, WebM, MOV… (Drive e Dropbox convertiti
 //              nel loro link di streaming diretto)
@@ -24,6 +25,9 @@ export function classifyVideoUrl(raw) {
     if (!/^[\w-]{11}$/.test(yt)) return { kind: 'invalid', reason: 'Link YouTube non riconosciuto' };
     return { kind: 'youtube', id: yt, start: parseYtTime(u.searchParams.get('t') || u.searchParams.get('start')), url: `https://www.youtube.com/watch?v=${yt}` };
   }
+
+  // MEGA: file cifrato, decifrato a pezzi dal service worker (vedi lib/mega.js)
+  if (/(^|\.)mega(\.co)?\.nz$/.test(host)) return { kind: 'mega', url: u.href };
 
   // Google Drive: /file/d/ID/..., open?id=ID, uc?id=ID
   if (host === 'drive.google.com' || host === 'docs.google.com') {

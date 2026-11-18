@@ -206,3 +206,34 @@ test('etichette di calibrazione per telecamera laterale', async () => {
   assert.equal(refLabel(nl, 'end'), 'Angolo vicino sinistro');
   assert.match(refLabel(nl, 'side'), /Fondo sinistro/);
 });
+
+test('MEGA: link, chiave, nome del file e decifratura a tratti', async () => {
+  const { parseMegaLink, decryptMegaAttributes, megaDecryptRange, toHex } = await import('../js/lib/mega.js');
+  const { randomBytes, createCipheriv } = await import('node:crypto');
+  const k = randomBytes(32);
+  const key = Buffer.alloc(16); for (let i = 0; i < 16; i++) key[i] = k[i] ^ k[i + 16];
+  const b64 = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  for (const link of [`https://mega.nz/file/AbCd_123#${b64(k)}`, `https://mega.nz/#!AbCd_123!${b64(k)}`]) {
+    const p = parseMegaLink(link);
+    assert.equal(p.handle, 'AbCd_123');
+    assert.deepEqual(Buffer.from(p.key), key);
+    assert.deepEqual(Buffer.from(p.nonce), k.subarray(16, 24));
+  }
+  assert.match(parseMegaLink('https://mega.nz/folder/AbCd_123#xyz').error, /cartella/);
+  assert.match(parseMegaLink('https://mega.nz/file/AbCd_123').error, /chiave/);
+  // attributi: AES-CBC senza padding
+  const txt = Buffer.from('MEGA{"n":"partita fano.mp4"}');
+  const padded = Buffer.concat([txt, Buffer.alloc((16 - (txt.length % 16)) % 16)]);
+  const c = createCipheriv('aes-128-cbc', key, Buffer.alloc(16)); c.setAutoPadding(false);
+  const at = b64(Buffer.concat([c.update(padded), c.final()]));
+  assert.equal((await decryptMegaAttributes(key, at)).n, 'partita fano.mp4');
+  assert.equal(await decryptMegaAttributes(randomBytes(16), at), null); // chiave sbagliata
+  // contenuto: AES-CTR, tratti a partire da offset qualsiasi (anche non allineati)
+  const plain = randomBytes(5000);
+  const iv = Buffer.concat([k.subarray(16, 24), Buffer.alloc(8)]);
+  const enc = createCipheriv('aes-128-ctr', key, iv).update(plain);
+  for (const [a, b] of [[0, 4999], [17, 1000], [4096, 4999], [333, 334]]) {
+    const out = await megaDecryptRange(toHex(key), toHex(k.subarray(16, 24)), a, enc.subarray(a, b + 1));
+    assert.deepEqual(Buffer.from(out), plain.subarray(a, b + 1));
+  }
+});

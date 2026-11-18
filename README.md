@@ -144,6 +144,7 @@ segnalata per la revisione.
    | Link | Scouting a clic, playlist | Calibrazione e analisi automatiche |
    |---|---|---|
    | File diretto (MP4/WebM/MOV), Dropbox, Google Drive condiviso | sì | sì, se il server consente la lettura dei fotogrammi (CORS); altrimenti calibrazione a mano |
+   | MEGA (`mega.nz/file/…#chiave`) | sì | sì: il service worker scarica e decifra (AES-CTR) solo i tratti che stai guardando |
    | YouTube (anche `youtu.be`, `live/`, `shorts/`, `?t=`) | sì, con i controlli dell'app | no: YouTube non permette di leggere i fotogrammi |
    | Flusso HLS (`.m3u8`) | sì | no |
 
@@ -227,6 +228,7 @@ tests/                       test unitari (node --test) e test end-to-end (Playw
 npm test                                   # test unitari (incluso l'analisi su video sintetico)
 npm run bench                              # banco di prova dell'analisi automatica (6 video sintetici)
 node tools/synth-video.mjs v.webm v.json   # crea un video sintetico di prova + verità (richiede ffmpeg)
+node tests/e2e/mega.mjs video.mp4                                            # link MEGA (finto MEGA locale con file cifrato)
 node tests/e2e/link.mjs video.mp4                                            # video da link (diretto con/senza CORS, YouTube simulato)
 npm start & node tests/e2e/smoke.mjs http://localhost:8080/ video.mp4 /tmp   # end-to-end (richiede Playwright)
 ```

@@ -14,6 +14,7 @@ import { createSettings } from './ui/settings.js';
 import { createAuto } from './ui/auto.js';
 import { SKILLS, DEFAULT_SETTINGS } from './lib/constants.js';
 import { classifyVideoUrl } from './lib/videosrc.js';
+import { resolveMega, megaStreamUrl } from './lib/mega.js';
 import { createYouTubeBinding } from './ui/ytplayer.js';
 
 const app = {
@@ -257,6 +258,17 @@ app.openVideoUrl = async (raw, { quiet = false } = {}) => {
     return true;
   }
   const v = app.video;
+  if (c.kind === 'mega') {
+    if (!quiet) toast('Collegamento a MEGA…', 'info', 3000);
+    const ok = await openMega(c.url);
+    if (!ok) return false;
+    remember(c.url);
+    app.match.video.name = ok.name;
+    app.save();
+    renderActive();
+    if (!quiet) toast(`MEGA: ${ok.name} in streaming (decifrato a pezzi, non scaricato).`, 'ok', 6000);
+    return true;
+  }
   const tryLoad = (cors) => new Promise((res) => {
     if (cors) v.crossOrigin = 'anonymous'; else v.removeAttribute('crossorigin');
     const ok = () => { off(); res(true); };
@@ -291,8 +303,42 @@ app.openVideoUrl = async (raw, { quiet = false } = {}) => {
   if (!quiet) toast(pixels ? 'Video in streaming dal link (non scaricato).' : 'Video in streaming. Il server non consente la lettura dei fotogrammi (CORS): analisi automatica non disponibile, scouting a clic sì.', pixels ? 'ok' : 'warn', 7000);
   return true;
 };
+// MEGA: il service worker scarica e decifra solo i tratti richiesti dal lettore
+async function swReady() {
+  if (!('serviceWorker' in navigator) || window.VSP_NO_SW || !location.protocol.startsWith('http')) return false;
+  if (navigator.serviceWorker.controller) return true;
+  await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 5000))]);
+  if (!navigator.serviceWorker.controller) await new Promise((r) => { navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }); setTimeout(r, 3000); });
+  return !!navigator.serviceWorker.controller;
+}
+async function openMega(link, resumeAt = null, retried = false) {
+  if (!(await swReady())) { toast('I video MEGA richiedono l\'app aperta da un indirizzo http(s) con il service worker attivo (non disponibile in questa anteprima). Ricarica la pagina e riprova.', 'error', 9000); return false; }
+  let r;
+  try { r = await resolveMega(link, { api: window.VSP_MEGA_API }); } catch (e) { toast(e.message, 'error', 8000); return false; }
+  const v = app.video;
+  v.removeAttribute('crossorigin');
+  const loaded = new Promise((res) => {
+    const ok = () => { off(); res(true); }, ko = () => { off(); res(false); };
+    const off = () => { v.removeEventListener('loadedmetadata', ok); v.removeEventListener('error', ko); };
+    v.addEventListener('loadedmetadata', ok); v.addEventListener('error', ko);
+  });
+  v.src = megaStreamUrl(r);
+  if (!(await loaded) && !retried) return openMega(link, resumeAt, true); // indirizzo appena scaduto: un nuovo tentativo
+  if (v.error || v.readyState === 0) { toast('MEGA: il video non si riproduce (formato non supportato dal browser o limite di traffico).', 'error', 8000); return false; }
+  if (resumeAt != null) v.currentTime = resumeAt;
+  app.videoInfo = { kind: 'mega', pixels: true, link };
+  return r;
+}
+// l'indirizzo di download MEGA scade dopo alcune ore: in caso di errore si rinnova
+app.video.addEventListener('error', async () => {
+  const vi = app.videoInfo;
+  if (vi?.kind !== 'mega' || vi.renewing) return;
+  vi.renewing = true;
+  const t = app.video.currentTime;
+  if (await openMega(vi.link, t)) toast('Collegamento MEGA rinnovato', 'info');
+});
 app.openVideoLink = () => {
-  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://… (YouTube, Google Drive, Dropbox, MP4, .m3u8)', value: /^https?:/.test(app.match.video.url || '') ? app.match.video.url : '' });
+  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://… (YouTube, MEGA, Google Drive, Dropbox, MP4, .m3u8)', value: /^https?:/.test(app.match.video.url || '') ? app.match.video.url : '' });
   const go = async () => { const u = inp.value; dlg.close(); await app.openVideoUrl(u); };
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
   const dlg = modal('Video da link', h('div', { class: 'col gap' },
@@ -301,6 +347,7 @@ app.openVideoLink = () => {
     h('ul', { class: 'small link-help' },
       h('li', {}, h('b', {}, 'YouTube'), ' — scouting a clic, playlist e tempi dei tocchi. Analisi e calibrazione automatiche non disponibili (YouTube non permette di leggere i fotogrammi): calibra a mano.'),
       h('li', {}, h('b', {}, 'Link diretto'), ' a un file MP4/WebM/MOV, ', h('b', {}, 'Dropbox'), ' o ', h('b', {}, 'Google Drive'), ' (condiviso "chiunque abbia il link") — tutto, compresa l\'analisi automatica se il server lo consente.'),
+      h('li', {}, h('b', {}, 'MEGA'), ' (link del singolo file, con la chiave dopo #) — tutto, compresa l\'analisi automatica: il video viene decifrato a pezzi mentre lo guardi.'),
       h('li', {}, h('b', {}, 'Flussi HLS'), ' (.m3u8) — scouting a clic.'))),
   { actions: [{ label: 'Annulla' }, { label: 'Apri link', primary: true, onClick: () => { go(); return false; } }] });
 };

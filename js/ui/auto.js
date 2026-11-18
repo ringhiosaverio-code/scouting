@@ -298,7 +298,7 @@ export function createAuto(app) {
       h('ul', { class: 'checklist' },
         h('li', { class: video.currentSrc ? 'ok' : 'bad' }, video.currentSrc ? `Video caricato (${fmtMin(dur)})` : 'Video non caricato'),
         h('li', { class: g.floor ? 'ok' : 'bad' }, g.floor ? 'Campo calibrato' : 'Campo non calibrato (scheda Scouting → 📐 Calibra)'),
-        h('li', { class: g.has3D ? 'ok' : 'warn' }, g.has3D ? 'Rete calibrata: ricostruzione 3D della palla' : 'Rete non calibrata: modalità 2D, meno precisa (aggiungi i 2 punti della rete in 📐 Calibra)'),
+        h('li', { class: 'ok' }, g.has3D ? 'Rete calibrata: ricostruzione 3D della palla' : 'Rete stimata dalla calibrazione del campo: ricostruzione 3D (per più precisione aggiungi i 2 punti della rete in 📐 Calibra)'),
         h('li', { class: app.rp.current ? 'ok' : 'warn' }, app.rp.current ? 'Formazioni inserite' : 'Inserisci le formazioni per ottenere i codici con i giocatori')),
       h('div', { class: 'row gap wrap' },
         h('label', { class: 'field inline' }, h('span', {}, 'Da'), fromInp),

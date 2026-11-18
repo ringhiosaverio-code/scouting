@@ -8,6 +8,10 @@ import {
 import { interpretTyped, describe, skillCode, parseSkillCode, rallyWinner, attackInfo } from '../lib/codes.js';
 import { uid, setterPosition, defaultSetter, liberos } from '../lib/engine.js';
 import { rankPlayers, rankCombos } from '../lib/predict.js';
+import { autoCalibrateVideo } from '../vision/analyzer.js';
+import { cameraFromHomography } from '../vision/camera.js';
+import { project as project3 } from '../vision/ballistic.js';
+import { computeHomography } from '../lib/court.js';
 import {
   EVALS, EVAL_TEXT, SERVE_TYPES, TYPE_TEXT, SPECIAL, ATTACK_TABLE, SIMPLIFIED_ATTACKS, SETTER_CALLS,
   SERVE_EVAL_FROM_RECEPTION, ATTACK_EVAL_FROM_DIG, ROLES, SKILLS, other,
@@ -160,7 +164,7 @@ export function createScout(app) {
     if (calib) {
       // punti di calibrazione e linee stimate
       const pts = app.match.calibration.points;
-      if (cal) drawCourtLines(cal, 'calib-lines');
+      if (cal) { drawCourtLines(cal, 'calib-lines'); drawNetEstimate(); }
       REF_POINTS.forEach((rp, i) => {
         const p = pts[rp.id];
         if (!p) return;
@@ -192,6 +196,46 @@ export function createScout(app) {
     }
     if (pend.attack?.start?.pt) { const p = courtToImg(pend.attack.start.pt); if (p) { const P = norm2px(p); overlay.appendChild(s('circle', { cx: P.x, cy: P.y, r: 8, class: 'ov-pending' })); } }
     if (pend.attack?.end?.pt) { const p = courtToImg(pend.attack.end.pt); if (p) { const P = norm2px(p); overlay.appendChild(s('circle', { cx: P.x, cy: P.y, r: 8, class: 'ov-pending' })); } }
+  }
+  // bordo superiore della rete previsto dalla telecamera stimata (dal solo pavimento):
+  // permette di verificare a colpo d'occhio la calibrazione 3D automatica
+  function drawNetEstimate() {
+    const pts = app.match.calibration.points;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return;
+    const floor = REF_POINTS.filter((r) => !r.net && pts[r.id]);
+    if (floor.length < 4) return;
+    let cam;
+    try {
+      const Hm = computeHomography(floor.map((r) => ({ x: (r.x - 0.5) * 3, y: (r.y - 0.5) * 3 })), floor.map((r) => ({ x: pts[r.id].x * vw, y: pts[r.id].y * vh })));
+      cam = cameraFromHomography(Hm, vw, vh);
+    } catch { return; }
+    if (!cam) return;
+    const nh = app.match.settings.netHeight || 2.43;
+    const P = (X) => { const q = project3(cam.P, X); return norm2px({ x: q[0] / vw, y: q[1] / vh }); };
+    const a = P([0, 9, nh]), b = P([9, 9, nh]), a0 = P([0, 9, 0]), b0 = P([9, 9, 0]);
+    overlay.append(
+      s('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'net-est' }),
+      s('line', { x1: a0.x, y1: a0.y, x2: a.x, y2: a.y, class: 'net-est post' }),
+      s('line', { x1: b0.x, y1: b0.y, x2: b.x, y2: b.y, class: 'net-est post' }),
+      s('text', { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 8, class: 'net-est-label' }, 'rete stimata'));
+  }
+  async function autoCalibrate() {
+    if (!hasVideo()) { toast('Carica prima un video', 'warn'); return; }
+    if (app.match.settings.clickSurface === 'court') setSurface('video');
+    video.pause();
+    toast('Ricerca delle linee del campo…', 'info', 4000);
+    let r;
+    try { r = await autoCalibrateVideo(video.currentSrc, { samples: 30 }); } catch (e) { toast('Errore: ' + e.message, 'error', 5000); return; }
+    if (!r.ok) { toast(`Calibrazione automatica non riuscita (${r.reason}): usa la calibrazione manuale`, 'warn', 6000); startCalibration(); return; }
+    const pts = app.match.calibration.points;
+    for (const k of Object.keys(pts)) if (!REF_POINTS.find((x) => x.id === k)?.net) delete pts[k];
+    Object.assign(pts, r.points);
+    app.save();
+    calib = { idx: REF_POINTS.length };
+    updateCalibBanner();
+    drawOverlay();
+    toast(`Campo riconosciuto (linee spiegate ${Math.round(r.quality * 100)}%). Controlla le linee gialle e la rete stimata, poi Fine.`, 'ok', 7000);
   }
   function drawCourtLines(cal, cls) {
     for (const [[x1, y1], [x2, y2]] of COURT_LINES) {
@@ -229,10 +273,11 @@ export function createScout(app) {
     const cur = REF_POINTS[calib.idx];
     banner.append(
       h('strong', {}, '📐 Calibrazione campo  '),
-      cur ? h('span', {}, `Clicca: ${cur.label}${cur.required ? '' : ' (facoltativo)'}`) : h('span', {}, 'Trascina i punti per rifinire.'),
+      cur ? h('span', {}, `Clicca: ${cur.label}${cur.required ? '' : ' (facoltativo)'} — oppure 🪄 Automatica`) : h('span', {}, 'Trascina i punti per rifinire.'),
       cal ? h('span', { class: 'muted' }, `  · errore medio ${cal.error.toFixed(2)} m su ${cal.n} punti`) : null,
       h('span', { class: 'spacer' }),
       cur && !cur.required ? h('button', { class: 'btn small', onclick: () => { calib.idx++; updateCalibBanner(); drawOverlay(); } }, 'Salta') : null,
+      h('button', { class: 'btn small', title: 'Riconosce da solo le linee del campo', onclick: () => autoCalibrate() }, '🪄 Automatica'),
       h('button', { class: 'btn small', onclick: () => { app.match.calibration.points = {}; calib.idx = 0; app.save(); updateCalibBanner(); drawOverlay(); } }, 'Ricomincia'),
       h('button', { class: 'btn small primary', disabled: !cal, onclick: () => { calib = null; app.save(); updateCalibBanner(); render(); toast('Campo calibrato'); } }, 'Fine'));
   }
@@ -987,13 +1032,14 @@ export function createScout(app) {
     updateCalibBanner();
     if (!calibration() && vid && !court && !calib) {
       banner.classList.remove('hidden');
-      clear(banner).append(h('span', {}, '⚠ Campo non calibrato: le posizioni dei tocchi non vengono registrate. '), h('button', { class: 'btn small primary', onclick: () => startCalibration() }, '📐 Calibra ora'));
+      clear(banner).append(h('span', {}, '⚠ Campo non calibrato: le posizioni dei tocchi non vengono registrate. '), h('button', { class: 'btn small primary', onclick: () => autoCalibrate() }, '🪄 Calibra automaticamente'), h('button', { class: 'btn small', onclick: () => startCalibration() }, '📐 A mano'));
     }
   }
 
   return {
     el: root, render, onKey, startCalibration, hasVideo, now, resetLiveClock: () => { liveStart = performance.now(); },
     clearPending: () => { pend = {}; },
+    autoCalibrate,
     // per i test
     _debug: () => ({ pend, flow: flow() }),
   };

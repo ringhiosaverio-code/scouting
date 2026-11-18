@@ -298,3 +298,7 @@ main > section.active { display: block; }
 .auto-desc { font-size: 12px; padding-left: 20px; margin: 6px 0; }
 .notes { padding-left: 4px; list-style: none; margin: 4px 0; font-size: 12px; }
 textarea.mono { width: 100%; font-family: var(--mono); }
+.net-est { stroke: #ff7ad9; stroke-width: 2; stroke-dasharray: 8 5; }
+.net-est.post { stroke-width: 1.5; }
+.net-est-label { fill: #ff7ad9; font: 600 12px system-ui, sans-serif; paint-order: stroke; stroke: #000; stroke-width: 3px; text-anchor: middle; }
+.banner .btn:not(.primary) { color: var(--text); }

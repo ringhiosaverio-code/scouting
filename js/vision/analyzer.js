@@ -1,5 +1,7 @@
 // Estrazione dei fotogrammi da un video nel browser e analisi nel Web Worker.
 import { cameraMatrix } from './ballistic.js';
+import { cameraFromHomography } from './camera.js';
+import { autoCalibrate } from './autocourt.js';
 import { extractRallies3D, extractRallies2D } from './rally.js';
 import { calibrationPairs3D, computeHomography } from '../lib/court.js';
 
@@ -125,12 +127,54 @@ export function geometryFor(calibPoints, W, H, netHeight) {
   let P = null, Hpx = null;
   if (has3D && p3.length >= 6) { try { P = cameraMatrix(p3, px); } catch { P = null; } }
   const floor = p3.map((X, i) => ({ X, q: px[i] })).filter((o) => o.X[2] === 0);
-  if (floor.length >= 4) Hpx = computeHomography(floor.map((o) => ({ x: o.q[0], y: o.q[1] })), floor.map((o) => ({ x: o.X[0], y: o.X[1] })));
-  return { P, Hpx, W, H, mode: P ? '3d' : Hpx ? '2d' : null };
+  let auto3d = false;
+  if (floor.length >= 4) {
+    Hpx = computeHomography(floor.map((o) => ({ x: o.q[0], y: o.q[1] })), floor.map((o) => ({ x: o.X[0], y: o.X[1] })));
+    // senza i punti della rete: telecamera completa stimata dalla sola omografia del pavimento
+    if (!P) {
+      const Hm = computeHomography(floor.map((o) => ({ x: o.X[0], y: o.X[1] })), floor.map((o) => ({ x: o.q[0], y: o.q[1] })));
+      const cam = cameraFromHomography(Hm, W, H);
+      if (cam) { P = cam.P; auto3d = true; }
+    }
+  }
+  return { P, Hpx, W, H, auto3d, mode: P ? '3d' : Hpx ? '2d' : null };
 }
 
 export function ralliesFromFrames(frames, geo, opts = {}) {
   if (geo.mode === '3d') return extractRallies3D(frames, geo.P, { W: geo.W, H: geo.H, ...opts });
   if (geo.mode === '2d') return extractRallies2D(frames, geo.Hpx, opts);
   return [];
+}
+
+// Sfondo (mediana per canale) di fotogrammi sparsi del video, in RGB
+export async function backgroundFromVideo(src, { width = 960, samples = 30, start = 0, end = null, onProgress } = {}) {
+  const video = document.createElement('video');
+  video.muted = true; video.preload = 'auto'; video.src = src;
+  await once(video, 'loadedmetadata');
+  const W = Math.min(width, video.videoWidth), H = Math.round(video.videoHeight * W / video.videoWidth);
+  const t1 = Math.min(end ?? video.duration, video.duration), t0 = Math.max(0, start);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  const frames = [];
+  for (let k = 0; k < samples; k++) {
+    video.currentTime = t0 + (k + 0.5) * (t1 - t0) / samples;
+    await once(video, 'seeked');
+    ctx.drawImage(video, 0, 0, W, H);
+    frames.push(ctx.getImageData(0, 0, W, H).data);
+    onProgress?.((k + 1) / samples);
+  }
+  video.removeAttribute('src'); video.load();
+  const out = new Uint8Array(W * H * 3), buf = new Uint8Array(frames.length);
+  for (let i = 0; i < W * H; i++) for (let ch = 0; ch < 3; ch++) {
+    for (let k = 0; k < frames.length; k++) buf[k] = frames[k][i * 4 + ch];
+    buf.sort();
+    out[i * 3 + ch] = buf[buf.length >> 1];
+  }
+  return { rgb: out, W, H };
+}
+
+export async function autoCalibrateVideo(src, opts = {}) {
+  const bg = await backgroundFromVideo(src, opts);
+  return autoCalibrate(bg.rgb, bg.W, bg.H, 3);
 }

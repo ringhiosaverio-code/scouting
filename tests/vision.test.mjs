@@ -85,3 +85,24 @@ test('maglia: preelaborazione isola e normalizza le cifre', async () => {
     assert.ok(p.h >= 40 && p.gray.some((v) => v === 0));
   }
 });
+
+test('calibrazione automatica dalle linee (campo sintetico) + telecamera 3D senza rete', async () => {
+  const { autoCalibrate } = await import('../js/vision/autocourt.js');
+  const { cameraFromHomography } = await import('../js/vision/camera.js');
+  const { makeCamera, makeRenderer, calibrationPoints } = await import('../tools/synth.mjs');
+  const cam = makeCamera(960, 540);
+  const img = makeRenderer(cam)(0, [], null);
+  const r = autoCalibrate(img, 960, 540, 3);
+  assert.ok(r.ok, r.reason);
+  const truth = calibrationPoints(cam);
+  for (const k of ['nl', 'nr', 'fr', 'fl', 'n3l', 'n3r', 'f3l', 'f3r']) {
+    const e = Math.hypot((r.points[k].x - truth[k].x) * 960, (r.points[k].y - truth[k].y) * 540);
+    assert.ok(e < 3, `${k}: errore ${e.toFixed(1)} px`);
+  }
+  // bordo della rete previsto dalla sola omografia del pavimento
+  const c = cameraFromHomography(r.H, 960, 540);
+  const { project } = await import('../js/vision/ballistic.js');
+  const q = project(c.P, [0, 9, 2.43]);
+  const e = Math.hypot(q[0] - truth.ntl.x * 960, q[1] - truth.ntl.y * 540);
+  assert.ok(e < 6, `rete: errore ${e.toFixed(1)} px`);
+});

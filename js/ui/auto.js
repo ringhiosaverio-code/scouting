@@ -194,7 +194,7 @@ export function createAuto(app) {
   let readChain = Promise.resolve();
   function readNumbers(opts = {}) {
     // una lettura alla volta (il video di lettura è condiviso): si accodano
-    const run = readChain.then(() => readNumbersNow(opts)).catch((e) => console.warn(e));
+    const run = readChain.then(() => readNumbersNow(opts)).catch((e) => { console.warn(e); toast('Riconoscimento dei giocatori non riuscito: ' + e.message, 'warn', 5000); });
     readChain = run;
     return run;
   }
@@ -216,7 +216,7 @@ export function createAuto(app) {
       // il numero letto deve essere di un giocatore in campo (o del libero) di quella squadra
       const cur = app.rp.current;
       const valid = new Set([...(cur ? cur.pos[e.team] : []), ...app.match.teams[e.team].players.filter((p) => p.role === 'L').map((p) => Number(p.number))]);
-      const boxH = (tc.box[3] - tc.box[1]) * (ocrVideo.videoHeight || 0);
+      const boxH = tc.box ? (tc.box[3] - tc.box[1]) * (ocrVideo.videoHeight || 0) : Infinity;
       // riconoscimento: rete neurale (chi è il giocatore e che numero ha, su più fotogrammi),
       // galleria della squadra (registrazioni e correzioni), rotazione e fondamentale
       {

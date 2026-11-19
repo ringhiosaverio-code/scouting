@@ -20,7 +20,13 @@ export async function digitsOn(frame, box, candidates) {
   if (digitBroken) return null;
   try {
     digitNet ||= await loadDigitNet();
-    return readNumber(digitNet, torsoInput(frame.rgba, frame.w, frame.h, box), candidates);
+    // due altezze del ritaglio: si tiene quella in cui il numero è più visibile
+    let best = null;
+    for (const shift of [0, 0.1]) {
+      const r = readNumber(digitNet, torsoInput(frame.rgba, frame.w, frame.h, box, 4, shift), candidates);
+      if (!best || r.pNone < best.pNone) best = r;
+    }
+    return best;
   } catch (e) { digitBroken = true; console.warn('riconoscitore delle cifre non disponibile', e); return null; }
 }
 // letture di più fotogrammi → probabilità combinate (il numero si vede solo in alcuni istanti)
@@ -64,10 +70,10 @@ export function onCourt(cal, frame, b) {
   // ±1 m dalle laterali (fuori: arbitri, guardalinee, panchine), ±4 m dai fondi (battitori)
   return c.x > 0.5 - 0.35 && c.x < 3.5 + 0.35 && c.y > 0.5 - 1.4 && c.y < 6.5 + 1.4;
 }
-async function neuralPeople(frame) {
+async function neuralPeople(frame, region = null) {
   if (detectorBroken) return null;
   try {
-    const boxes = await detectPeople(frame.canvas);
+    const boxes = await detectPeople(frame.canvas, region ? { tiles: [region] } : {});
     return boxes.filter((b) => b.cls === 0).map((b) => [b.x0, b.y0, b.x1, b.y1, b.score]);
   } catch (e) {
     detectorBroken = true;
@@ -341,15 +347,25 @@ export async function describeTouch(video, t, boxNorm, footNorm = null, cal = nu
     await seek(tt);
     const fr = grabFrame(video);
     let box = null;
-    const nn = await neuralPeople(fr);
+    // zona attorno al giocatore (punto del tocco o riquadro precedente): la rete guarda solo lì
+    // punto d'appoggio fuori dall'inquadratura (battitore vicino alla telecamera): si cerca
+    // al bordo dell'immagine
+    const fx0 = Math.min(fr.w - 1, Math.max(0, (footNorm ? footNorm[0] : boxNorm ? (boxNorm[0] + boxNorm[2]) / 2 : 0.5) * fr.w));
+    const fy0 = Math.min(fr.h - 1, Math.max(0, (footNorm ? footNorm[1] : boxNorm ? boxNorm[3] : 0.5) * fr.h));
+    const outside = footNorm && (footNorm[1] > 1 || footNorm[1] < 0 || footNorm[0] < 0 || footNorm[0] > 1);
+    const refH = anchor ? anchor[3] - anchor[1] : boxNorm ? (boxNorm[3] - boxNorm[1]) * fr.h : fr.h * 0.25;
+    const side = Math.max(fr.h * 0.35, Math.min(fr.h, refH * 3.2));
+    const cxr = anchor ? (anchor[0] + anchor[2]) / 2 : fx0, cyr = anchor ? anchor[3] - refH / 2 : fy0 - refH / 2;
+    const region = [Math.round(cxr - side / 2), Math.round(cyr - side / 2), Math.round(side), Math.round(side)];
+    const nn = await neuralPeople(fr, region);
     if (nn) {
       const cand = nn.filter((b) => onCourt(cal, fr, b));
       if (Math.abs(dt) <= 0.2 || !anchor) {
         // vicino al tocco: il giocatore più vicino al punto di contatto
-        const fx = (footNorm ? footNorm[0] : (boxNorm[0] + boxNorm[2]) / 2) * fr.w, fy = (footNorm ? footNorm[1] : boxNorm[3]) * fr.h;
-        const dist = (q) => Math.hypot((q[0] + q[2]) / 2 - fx, (q[3] - fy) * 0.6);
+        const dist = (q) => Math.hypot((q[0] + q[2]) / 2 - fx0, (Math.min(q[3], fr.h - 1) - fy0) * 0.6);
         cand.sort((x, y) => dist(x) - dist(y));
-        if (cand.length && dist(cand[0]) < Math.max(80, (cand[0][3] - cand[0][1]) * 1.2)) box = cand[0].slice(0, 4);
+        const tol = Math.max(80, (cand[0]?.[3] - cand[0]?.[1]) * (outside ? 2 : 1.2));
+        if (cand.length && dist(cand[0]) < tol) box = cand[0].slice(0, 4);
       } else {
         // più lontano nel tempo: lo stesso giocatore, cioè il riquadro più vicino a quello noto
         const ref = anchor, hgt = ref[3] - ref[1];

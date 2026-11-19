@@ -84,9 +84,11 @@ const softmax = (a) => { const m = Math.max(...a); const e = a.map((v) => Math.e
 
 // ritaglio del busto dal riquadro della persona [x0,y0,x1,y1] (pixel) → ingresso normalizzato
 export const TORSO = { x: 0.12, y0: 0.15, y1: 0.52 };
-export function torsoInput(rgba, w, h, box, ch = 4) {
+export function torsoInput(rgba, w, h, box, ch = 4, shift = 0) {
   const [x0, y0, x1, y1] = box, bw = x1 - x0, bh = y1 - y0;
-  const cx0 = x0 + TORSO.x * bw, cx1 = x1 - TORSO.x * bw, cy0 = y0 + TORSO.y0 * bh, cy1 = y0 + TORSO.y1 * bh;
+  // shift: spostamento verticale del ritaglio (frazione dell'altezza del riquadro), per le
+  // pose con le braccia alzate in cui il busto è più in basso nel riquadro
+  const cx0 = x0 + TORSO.x * bw, cx1 = x1 - TORSO.x * bw, cy0 = y0 + (TORSO.y0 + shift) * bh, cy1 = y0 + (TORSO.y1 + shift) * bh;
   const out = new Float32Array(IN_H * IN_W * 3);
   // ricampionamento con media dell'area (come il ridimensionamento del generatore)
   const sx = (cx1 - cx0) / IN_W, sy = (cy1 - cy0) / IN_H;

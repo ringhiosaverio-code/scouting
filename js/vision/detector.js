@@ -89,7 +89,7 @@ function call(msg, transfer = []) {
 }
 
 // persone nell'immagine (ImageBitmap, canvas o video). Restituisce [{x0,y0,x1,y1,score}] in pixel
-// dell'immagine data.
+// dell'immagine data. tiles: 'auto' | 'full' | [[x, y, w, h], ...] (zone da esaminare).
 export async function detectPeople(image, { tiles = 'auto', thr = 0.3, ball = false } = {}) {
   await loadDetector();
   const bmp = image instanceof ImageBitmap ? image : await createImageBitmap(image);

@@ -30,7 +30,8 @@ async function detect(m) {
   const bmp = m.bitmap, W = bmp.width, H = bmp.height;
   const classes = m.ball ? [COCO_PERSON, COCO_BALL] : [COCO_PERSON];
   let all = [];
-  for (const [x, y, w, h] of tilesFor(W, H, m.tiles)) {
+  const tiles = Array.isArray(m.tiles) ? m.tiles.map(([x, y, w, h]) => [Math.max(0, x), Math.max(0, y), Math.min(W - Math.max(0, x), w), Math.min(H - Math.max(0, y), h)]) : tilesFor(W, H, m.tiles);
+  for (const [x, y, w, h] of tiles) {
     const k = Math.min(size / w, size / h);
     ctx.fillStyle = 'rgb(114,114,114)';
     ctx.fillRect(0, 0, size, size);

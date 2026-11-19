@@ -83,7 +83,7 @@ export function forward(netw, x) {
 const softmax = (a) => { const m = Math.max(...a); const e = a.map((v) => Math.exp(v - m)); const s = e.reduce((x, y) => x + y, 0); return e.map((v) => v / s); };
 
 // ritaglio del busto dal riquadro della persona [x0,y0,x1,y1] (pixel) → ingresso normalizzato
-export const TORSO = { x: 0.10, y0: 0.12, y1: 0.60 };
+export const TORSO = { x: 0.12, y0: 0.15, y1: 0.52 };
 export function torsoInput(rgba, w, h, box, ch = 4) {
   const [x0, y0, x1, y1] = box, bw = x1 - x0, bh = y1 - y0;
   const cx0 = x0 + TORSO.x * bw, cx1 = x1 - TORSO.x * bw, cy0 = y0 + TORSO.y0 * bh, cy1 = y0 + TORSO.y1 * bh;

@@ -3,7 +3,7 @@
 //  - 3D: calibrazione con il bordo della rete -> traiettorie balistiche 3D (precisa)
 //  - 2D: solo omografia del pavimento -> tocchi dai cambi di traiettoria nell'immagine
 import { buildTracks, buildChains, detectRallies as detect2D } from './tracker.js';
-import { segmentFlights, posAt, velAt, project, fitFlightThrough } from './ballistic.js';
+import { segmentFlights, segmentFlights3D, posAt, velAt, project, fitFlightThrough } from './ballistic.js';
 import { applyH, xy2zone, xy2subzone, xy2serveZone, flipXY, receptionEvalAt } from '../lib/court.js';
 import { ATTACK_TABLE, SIMPLIFIED_ATTACKS, ATTACK_EVAL_FROM_DIG, SERVE_EVAL_FROM_RECEPTION, other } from '../lib/constants.js';
 
@@ -96,7 +96,14 @@ export function extractRallies3D(frames, P, opts = {}) {
   const pathOf = (ch, from, to) => ch.pts.filter((q, i) => i % 2 === 0 && q.t >= from && q.t <= to).map((q) => [+q.t.toFixed(3), +q.x.toFixed(1), +q.y.toFixed(1)]);
   let prev = null; // ultimo scambio, per riattaccare catene interrotte
   for (const ch of chains) {
-    const { segs, events } = segmentFlights(P, ch.pts, opts);
+    let { segs, events } = segmentFlights(P, ch.pts, opts);
+    // seconda passata 3D sulle sole osservazioni dei voli buoni: tocchi e profondità decisi
+    // insieme (corregge i voli che si allontanano dalla telecamera, spezzati per errore)
+    if (opts.seg3d !== false && segs.length) {
+      const clean = ch.pts.filter((q, i) => segs.some((g) => i >= g.i && i < g.j));
+      const r = segmentFlights3D(P, clean, opts);
+      if (r && r.segs.length && r.rms < (opts.seg3dMaxRms ?? 2.2)) events = reconcile3D(events, r);
+    }
     if (!segs.length) continue;
     const ev = events.map((e) => ({ ...e, side: sideOf(e.X) }));
     const s0 = segs[0];
@@ -163,6 +170,35 @@ export function extractRallies3D(frames, P, opts = {}) {
   }
   for (const r of out) delete r.obsEnd;
   return mergeOverlapping(out);
+}
+
+// Confronto tra i tocchi dei voli liberi e quelli della segmentazione 3D (prudente):
+//  - un tocco senza corrispondente 3D entro 0,4 s era un volo spezzato a metà → tolto
+//  - un tocco 3D senza corrispondente, ben sostenuto (voli adiacenti lunghi, cambio netto di
+//    direzione), era stato perso → aggiunto con la posizione 3D
+//  - i tocchi confermati restano come sono (la stima libera è più precisa quando c'è)
+export function reconcile3D(events, r) {
+  const ev3 = r.events, segs3 = r.segs;
+  const near = (t, list) => list.find((e) => Math.abs(e.t - t) <= 0.4);
+  const kept = [];
+  for (const e of events) {
+    const m = near(e.t, ev3);
+    if (e.kind !== 'bounce' && !m) continue;
+    // stesso tocco ma dall'altra parte della rete secondo la ricostruzione 3D (coerente con
+    // tutti i voli): la profondità del volo libero era sbagliata → posizione 3D
+    if (m && e.kind === 'touch' && m.kind === 'touch' && sideOf(m.X) !== sideOf(e.X)) kept.push({ ...e, X: m.X, vin: m.vin, vout: m.vout, speedOut: m.speedOut, depth3d: true });
+    else kept.push(e);
+  }
+  for (let k = 0; k < ev3.length; k++) {
+    const e = ev3[k];
+    if (near(e.t, events)) continue;
+    const A = segs3[k], B = segs3[k + 1];
+    const support = A && B && A.j - A.i >= 8 && B.j - B.i >= 6 && e.angle > 30;
+    if (support) kept.push({ ...e, conf: Math.min(e.conf, 0.6), added3d: true });
+  }
+  kept.sort((a, b) => a.t - b.t);
+  // due tocchi a meno di 0,3 s dalla stessa parte: è lo stesso tocco
+  return kept.filter((e, i) => !(i > 0 && e.kind === 'touch' && kept[i - 1].kind === 'touch' && e.t - kept[i - 1].t < 0.3 && sideOf(e.X) === sideOf(kept[i - 1].X)));
 }
 
 // Modalità 2D: H = omografia immagine(pixel di lavoro) -> metri sul pavimento

@@ -22,6 +22,7 @@ def init(key):
         key, k1 = jax.random.split(key)
         if l[0] == 'conv':
             p[f'c{i}w'] = jax.random.normal(k1, (3, 3, l[1], l[2])) * math.sqrt(2 / (9 * l[1])); p[f'c{i}b'] = jnp.zeros(l[2])
+            p[f'n{i}g'] = jnp.ones(l[2]); p[f'n{i}b'] = jnp.zeros(l[2])
         elif l[0] == 'fc':
             p[f'f{i}w'] = jax.random.normal(k1, (l[1], l[2])) * math.sqrt(2 / l[1]); p[f'f{i}b'] = jnp.zeros(l[2])
         elif l[0] == 'heads':
@@ -30,11 +31,23 @@ def init(key):
             p['uw'] = jax.random.normal(k2, (l[1], 11)) * math.sqrt(1 / l[1]); p['ub'] = jnp.zeros(11)
     return p
 
-def forward(p, x, train=False, key=None):
+def init_stats():
+    return {f'{i}': (jnp.zeros(l[2]), jnp.ones(l[2])) for i, l in enumerate(ARCH) if l[0] == 'conv'}
+
+def forward(p, x, train=False, key=None, stats=None, new_stats=None):
+    # normalizzazione per lotti: in addestramento statistiche del lotto (raccolte in new_stats),
+    # in uso medie mobili (stats); all'esportazione viene fusa nei pesi della convoluzione
     h = x
     for i, l in enumerate(ARCH):
         if l[0] == 'conv':
             h = jax.lax.conv_general_dilated(h, p[f'c{i}w'], (1, 1), 'SAME', dimension_numbers=('NHWC', 'HWIO', 'NHWC')) + p[f'c{i}b']
+            if f'n{i}g' in p:
+                if train:
+                    m = h.mean((0, 1, 2)); v = h.var((0, 1, 2))
+                    if new_stats is not None: new_stats[f'{i}'] = (m, v)
+                elif stats is not None: m, v = stats[f'{i}']
+                else: m, v = jnp.zeros(l[2]), jnp.ones(l[2])
+                h = (h - m) / jnp.sqrt(v + 1e-5) * p[f'n{i}g'] + p[f'n{i}b']
             h = jax.nn.relu(h)
         elif l[0] == 'pool':
             h = jax.lax.reduce_window(h, -jnp.inf, jax.lax.max, (1, 2, 2, 1), (1, 2, 2, 1), 'VALID')
@@ -46,9 +59,22 @@ def forward(p, x, train=False, key=None):
     return h @ p['tw'] + p['tb'], h @ p['uw'] + p['ub']
 
 def loss_fn(p, x, t, u, key):
-    lt, lu = forward(p, x, True, key)
+    ns = {}
+    lt, lu = forward(p, x, True, key, new_stats=ns)
     ce = lambda l, y: -jnp.mean(jnp.take_along_axis(jax.nn.log_softmax(l), y[:, None], 1))
-    return ce(lt, t) + ce(lu, u)
+    return ce(lt, t) + ce(lu, u), ns
+
+def fold(p, stats):
+    # pesi per il browser: normalizzazione fusa nella convoluzione (nessuno strato in più in JS)
+    q = {}
+    for i, l in enumerate(ARCH):
+        if l[0] == 'conv':
+            m, v = stats[f'{i}']; k = p[f'n{i}g'] / jnp.sqrt(v + 1e-5)
+            q[f'c{i}w'] = p[f'c{i}w'] * k; q[f'c{i}b'] = (p[f'c{i}b'] - m) * k + p[f'n{i}b']
+        elif l[0] == 'fc':
+            q[f'f{i}w'] = p[f'f{i}w']; q[f'f{i}b'] = p[f'f{i}b']
+    for k in ('tw', 'tb', 'uw', 'ub'): q[k] = p[k]
+    return q
 
 def augment(rng, X):
     # piccoli spostamenti e specchiature di colore (le cifre non si specchiano!)
@@ -99,32 +125,43 @@ if __name__ == '__main__':
     opt = optax.chain(optax.clip_by_global_norm(2.0), optax.adamw(sched, weight_decay=1e-4))
     st = opt.init(p)
     fwd = jax.jit(lambda p, x: forward(p, x))
+    stats = init_stats()
     @jax.jit
-    def step(p, st, x, t, u, key):
-        l, g = jax.value_and_grad(loss_fn)(p, x, t, u, key)
+    def step(p, st, stats, x, t, u, key):
+        (l, ns), g = jax.value_and_grad(loss_fn, has_aux=True)(p, x, t, u, key)
         up, st = opt.update(g, st, p)
-        return optax.apply_updates(p, up), st, l
+        stats = {k: (0.95 * stats[k][0] + 0.05 * ns[k][0], 0.95 * stats[k][1] + 0.05 * ns[k][1]) for k in stats}
+        return optax.apply_updates(p, up), st, stats, l
     rng = np.random.default_rng(1)
     t0 = time.time(); it = 0
-    for ep in range(epochs):
+    # ripresa da un salvataggio (l'addestramento può essere interrotto)
+    import pickle, os
+    ck = odir + '/checkpoint.pkl'
+    ep0 = 0
+    if os.path.exists(ck):
+        d = pickle.load(open(ck, 'rb')); p, st, stats, ep0 = d['p'], d['st'], d['stats'], d['ep'] + 1
+        print('ripresa dall\'epoca', ep0 + 1, flush=True)
+    for ep in range(ep0, epochs):
         perm = rng.permutation(len(X)); tot = 0
         for b in range(len(X) // bs):
             idx = perm[b * bs:(b + 1) * bs]
             xb = norm_input(augment(rng, X[idx]))
             key, k = jax.random.split(key)
-            p, st, l = step(p, st, jnp.asarray(xb), jnp.asarray(T[idx]), jnp.asarray(U[idx]), k)
+            p, st, stats, l = step(p, st, stats, jnp.asarray(xb), jnp.asarray(T[idx]), jnp.asarray(U[idx]), k)
             tot += float(l); it += 1
             if b % 150 == 0: print(f'epoca {ep + 1} passo {b} perdita {tot / (b + 1):.3f} ({time.time() - t0:.0f} s)', flush=True)
-        num, conf = evaluate(p, Xv, truth_v, fwd)
+        pf = fold(p, stats)
+        num, conf = evaluate(pf, Xv, truth_v, fwd)
         print(f'== epoca {ep + 1}: perdita {tot / (len(X) // bs):.3f}')
         report('sintetico', num, conf, truth_v)
         if real is not None:
-            num, conf = evaluate(p, real['X'], real['num'], fwd)
+            num, conf = evaluate(pf, real['X'], real['num'], fwd)
             for thr in (0.5, 0.7, 0.85): report('REALE Fano', num, conf, real['num'], thr)
         # esportazione dei pesi (float32, ordine fisso) per il browser
-        names = sorted(p.keys())
-        flat = np.concatenate([np.asarray(p[k], np.float32).ravel() for k in names])
-        meta = {'in': [IN_H, IN_W], 'arch': [list(l) for l in ARCH], 'tensors': [[k, list(np.asarray(p[k]).shape)] for k in names]}
+        names = sorted(pf.keys())
+        flat = np.concatenate([np.asarray(pf[k], np.float32).ravel() for k in names])
+        meta = {'in': [IN_H, IN_W], 'arch': [list(l) for l in ARCH], 'tensors': [[k, list(np.asarray(pf[k]).shape)] for k in names]}
         flat.astype(np.float16).tofile(odir + '/digitnet.f16')
         json.dump(meta, open(odir + '/digitnet.json', 'w'))
+        pickle.dump({'p': p, 'st': st, 'stats': stats, 'ep': ep}, open(ck, 'wb'))
         print('  pesi salvati', flat.size, 'parametri', flush=True)

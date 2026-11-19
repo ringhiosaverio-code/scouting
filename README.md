@@ -61,8 +61,13 @@ palazzetti) e si può installare come applicazione dal browser.
 Il sistema guarda il video e **propone** gli scambi già codificati; lo scout li rivede
 e li accetta (anche in serie) o li corregge. Funziona così:
 
+0. **Lettura veloce del video**: il file non viene riprodotto ma decodificato
+   direttamente (WebCodecs, accelerazione hardware dove disponibile) da più processi
+   in parallelo, ognuno su un tratto della partita. Formati: MP4/MOV (H.264, HEVC
+   dell'iPhone) e WebM, da file locale, link diretto o MEGA. Se il formato o il browser
+   non lo consentono si ripiega sulla lettura tradizionale (video riprodotto a 2×).
 1. **Sfondo e sagome**: mediana di fotogrammi sparsi → il campo senza giocatori;
-   per differenza si ottengono le sagome dei giocatori.
+   per differenza si ottengono le sagome (usate per la palla e le pause).
 2. **Palla**: piccoli oggetti compatti in movimento (differenza su tre fotogrammi),
    collegati in tracce con predizione del moto; scartati bordi di giocatori,
    numeri di maglia e oggetti fermi.
@@ -79,10 +84,17 @@ e li accetta (anche in serie) o li corregge. Funziona così:
    zone, tipo di battuta e combinazione d'attacco (dal tempo alzata→attacco), squadra
    che vince il punto. I giocatori vengono dalla rotazione (battitore, palleggiatore)
    e dal predittore per zona.
-5. **Numeri di maglia (sperimentale)**: per ogni tocco si ritaglia il busto del
-   giocatore, si isolano e normalizzano le cifre e le si legge con Tesseract.js
-   (scaricato dalla CDN al primo uso). Il numero letto sostituisce la proposta solo
-   se è di un giocatore in campo di quella squadra.
+5. **Chi tocca la palla**: attorno a ogni tocco una **rete neurale di rilevamento delle
+   persone** (YOLOX, `models/`) trova i giocatori nel fotogramma a piena risoluzione;
+   quello che tocca è il più vicino al punto del contatto, e viene seguito qualche
+   istante prima e dopo.
+6. **Numero di maglia**: una seconda rete, addestrata su maglie sintetiche (decine di
+   caratteri sportivi, colori, sponsor, pieghe, sfocatura e compressione video,
+   `tools/digits`), legge il numero sul busto in ogni fotogramma; le letture si
+   sommano (basta che il numero si veda in un istante). Il risultato si combina con
+   la galleria della squadra (👕 Giocatori) e con rotazione e fondamentale; il numero
+   sostituisce la proposta solo se è stato davvero letto. Ogni correzione dello scout
+   insegna qualcosa (galleria e peso degli indizi).
 
 Le incertezze vengono **segnalate** nella proposta: palla vicino alla linea, tocco o
 alzata non visti e quindi dedotti, atterraggio non visto, battitore incoerente con la

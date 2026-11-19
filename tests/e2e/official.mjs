@@ -87,6 +87,31 @@ await step('accettazione: punteggio e verifica del video', async () => {
   const r = await page.evaluate(() => window.vsp.match.analysis.rallies[0]);
   if (!r.raw || r.off?.k !== 0) throw new Error('lettura del video non conservata');
 });
+// il video perde il 2° scambio ufficiale (errore in battuta di casa) e vede il 3° (battuta
+// sbagliata degli ospiti, dal lato lontano) e il 4° (ace di casa)
+await page.evaluate(() => {
+  const m = window.vsp.match;
+  m.analysis.rallies.push(
+    { id: 'r3', start: 60, end: 62, touches: [{ t: 60.5, side: 'far', X: [3, 18.5, 2.9], conf: 0.8, speedOut: 22 }], landing: { X: [4, 10.5, 0], t: 61.5 }, path: [], mode: '3d', status: 'todo' },
+    { id: 'r4', start: 80, end: 82, touches: [{ t: 80.5, side: 'near', X: [6, -0.5, 2.9], conf: 0.8, speedOut: 24 }], landing: { X: [5, 15, 0], t: 81.5 }, path: [], mode: '3d', status: 'todo' });
+  window.vsp.save();
+});
+await page.click('.tabs button[data-tab="scout"]');
+await page.click('.tabs button[data-tab="auto"]');
+await step('scambio perso dal video: si aggiunge dal punto a punto', async () => {
+  await page.click('.auto-list .clips li:nth-child(2)');
+  await page.waitForSelector('button:has-text("Aggiungi 1 dai dati ufficiali")');
+  await page.click('button:has-text("Aggiungi 1 dai dati ufficiali")');
+  await page.waitForFunction(() => window.vsp.rp.current?.score.a === 1);
+  const txt = await page.inputValue('textarea[data-rally="r3"]');
+  console.log('   codici:', txt);
+  if (!/^a11S.=/.test(txt) || !/\*p$/.test(txt)) throw new Error('scambio 3 non corretto');
+  await page.click('button:has-text("Accetta (Invio)")');
+  await page.waitForFunction(() => window.vsp.rp.current?.score['*'] === 2);
+  const t4 = await page.inputValue('textarea[data-rally="r4"]');
+  console.log('   codici:', t4);
+  if (!/^\*16S.#/.test(t4) || !/a14R.=/.test(t4)) throw new Error('ace non corretto');
+});
 await page.screenshot({ path: shot, fullPage: false });
 await browser.close();
 srv.kill();

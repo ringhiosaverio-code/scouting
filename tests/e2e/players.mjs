@@ -94,11 +94,12 @@ await step('analisi automatica: chi tocca riconosciuto, lo scout corregge, l\'ap
     await page.click('text=Riconosci giocatori');
     try { await page.waitForSelector('.ocr-results', { timeout: 60000 }); } catch { console.log('   scambio', i + 1, 'senza risultati'); continue; }
     const res = await page.evaluate(() => [...document.querySelectorAll('.ocr-results li')].map((l) => l.textContent));
+    const tks = await page.evaluate(() => [...document.querySelectorAll('.ocr-results li')].map((l) => (l.dataset.tk === '' || l.dataset.tk == null ? null : +l.dataset.tk)));
     const tts = await page.evaluate((k) => window.vsp.match.analysis.rallies[k].touches.map((t) => t.t), i);
     let good = 0, bad = 0, numBad = 0;
     const fixes = [];
     res.forEach((l, k) => {
-      const tr = truthFor(tts[k]);
+      const tr = truthFor(tts[tks[k] ?? k]);
       const m = l.match(/(riconosciuto|confermato|incerto:) #(\d+)/);
       if (m && Number(m[2]) === tr.player) good++; else { bad++; if (/numero riconosciuto/.test(l)) numBad++; console.log(`   ✗ scambio ${i + 1} tocco ${tr.skill} vero #${tr.player}: ${l}`); }
       fixes.push(tr.player);

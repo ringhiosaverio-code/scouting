@@ -117,7 +117,7 @@ export function parsePbp(html) {
 // pbp: scambi di un set (o di più set consecutivi); homeIs: 0 se la squadra di casa dell'app
 // è la squadra di casa Legavolley, 1 altrimenti. Allineamento con programmazione dinamica:
 // scambi rilevati in più (es. palleggi) o mancanti (tagli del video) sono ammessi.
-export function alignRallies(detected, pbp, homeIs = 0) {
+export function alignRallies(detected, pbp, homeIs = 0, { freeStart = true } = {}) {
   const T = (t) => (t == null ? null : (t === homeIs ? '*' : 'a'));
   const n = detected.length, m = pbp.length;
   const cost = (d, p) => {
@@ -130,7 +130,7 @@ export function alignRallies(detected, pbp, homeIs = 0) {
   const D = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(Infinity));
   const B = Array.from({ length: n + 1 }, () => new Int8Array(m + 1));
   D[0][0] = 0;
-  for (let j = 1; j <= m; j++) { D[0][j] = D[0][j - 1] + SKIP_P * 0.3; B[0][j] = 2; } // può cominciare a metà set
+  for (let j = 1; j <= m; j++) { D[0][j] = D[0][j - 1] + SKIP_P * (freeStart ? 0.3 : 1); B[0][j] = 2; } // il video può cominciare a metà set
   for (let i = 1; i <= n; i++) { D[i][0] = D[i - 1][0] + SKIP_D; B[i][0] = 1; }
   for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
     const a = D[i - 1][j - 1] + cost(detected[i - 1], pbp[j - 1]), b = D[i - 1][j] + SKIP_D, c = D[i][j - 1] + SKIP_P;

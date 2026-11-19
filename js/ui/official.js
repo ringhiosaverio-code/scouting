@@ -304,3 +304,18 @@ export function officialCard(app, rerender) {
     h('button', { class: 'btn small', onclick: () => { delete m.official; app.save(); rerender(); } }, 'Rimuovi')));
   return card;
 }
+
+// eventi di uno scambio ufficiale non visto nel video (aggiunto dai soli dati ufficiali)
+export function officialEvents(r, match, vt) {
+  const T = (t) => teamOf(match, t);
+  const ev = [];
+  const sk = (team, skill, num, e) => ev.push({ kind: 'skill', team, skill, num: num ?? null, ev: e, type: 'H', combo: null, target: null, sz: null, ez: null, esz: null, stype: null, nb: null, special: null, custom: '', vt: +(vt + ev.length * 0.8).toFixed(2), auto: { conf: 1, official: true, virtual: true } });
+  sk(T(r.serveTeam), 'S', r.server, r.serve === 'ace' ? '#' : r.serve === 'serve_err' ? '=' : '+');
+  const EV = { att: '+', att_pt: '#', att_err: '=', att_blocked: '/', block_pt: '#', rec_err: '=' };
+  for (const a of r.actions) {
+    const skill = ATT.has(a.kind) ? 'A' : a.kind === 'block_pt' ? 'B' : a.kind === 'rec_err' ? 'R' : null;
+    if (skill) sk(T(a.team), skill, a.num, EV[a.kind]);
+  }
+  if (r.winner != null) ev.push({ kind: 'point', team: T(r.winner), vt: +(vt + ev.length * 0.8).toFixed(2) });
+  return ev;
+}

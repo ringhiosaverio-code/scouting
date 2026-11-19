@@ -13,7 +13,8 @@ import { rankPlayers } from '../lib/predict.js';
 import { uid } from '../lib/engine.js';
 import { ATTACK_TABLE } from '../lib/constants.js';
 import { readJerseyAt } from '../vision/jersey.js';
-import { officialOf, officialRally, applyOfficial, rawReading, officialCard, describeOfficial } from './official.js';
+import { officialOf, officialRally, applyOfficial, rawReading, officialCard, describeOfficial, officialEvents } from './official.js';
+import { alignRallies } from '../lib/legavolley.js';
 import { winFeatures, loadWinModel, saveWinModel, pNear, updateWinModel } from '../lib/winmodel.js';
 
 export function createAuto(app) {
@@ -308,6 +309,33 @@ export function createAuto(app) {
       b.status === 'todo' ? h('button', { class: 'btn small', title: 'Non è successo', onclick: (e) => { e.stopPropagation(); ignoreBreak(b); } }, '✕') : null);
   }
 
+  // scambi da rivedere (fino alla fine del set) abbinati agli scambi ufficiali che restano nel set
+  function officialPlan(cur) {
+    const off = officialOf(app.match);
+    const rs = rallies(), det = [];
+    for (let i = 0; i < rs.length; i++) {
+      const r = rs[i];
+      if (r.status !== 'todo') continue;
+      if (det.length) { const b = breakBefore(r); if (b && b.kind === 'setbreak') break; }
+      const t0 = r.touches[0];
+      det.push({ i, serveTeam: !t0 || t0.noServe ? null : (t0.side === 'near') === cur.homeNear ? '*' : 'a', winner: null });
+      if (det.length >= 80) break;
+    }
+    const k0 = cur.score['*'] + cur.score.a;
+    const pbp = off.rallies.filter((x) => x.set === cur.set).slice(k0);
+    const pairs = alignRallies(det, pbp, app.match.official.homeIs ?? 0, { freeStart: false });
+    return new Map(det.map((d, j) => [d.i, pairs[j] == null ? null : k0 + pairs[j]]));
+  }
+  function addMissing(ms, beforeVt) {
+    const off = officialOf(app.match);
+    const L = off.rallies.filter((x) => x.set === ms.set).slice(ms.from, ms.to);
+    app.commit('Scambi dai dati ufficiali', (m) => {
+      L.forEach((r, n) => { for (const e of officialEvents(r, app.match, beforeVt - (L.length - n) * 4)) m.events.push({ ...e, id: uid() }); });
+    });
+    toast(`${L.length} scambi aggiunti dal punto a punto ufficiale`, 'ok');
+    proposal = buildProposal(selIndex);
+    render();
+  }
   function buildProposal(i) {
     const ra = rallies()[i];
     const cur = app.rp.current;
@@ -328,7 +356,20 @@ export function createAuto(app) {
     // scambio ufficiale: quello del punteggio attuale; per uno scambio già accettato, quello abbinato allora
     const offM = officialOf(app.match) && app.match.official.apply !== false ? officialOf(app.match) : null;
     const offAt = (o) => { const r = offM.rallies.filter((x) => x.set === o.set)[o.k]; return r ? { r, k: o.k, ok: true, before: [] } : null; };
-    const off = !offM ? null : ra.status === 'accepted' ? (ra.off ? offAt(ra.off) : null) : officialRally(app.match, cur);
+    let off = !offM ? null : ra.status === 'accepted' ? (ra.off ? offAt(ra.off) : null) : officialRally(app.match, cur);
+    // abbinamento in blocco: scambi persi dal video o rilevati in più (riscaldamento, replay)
+    let missing = null;
+    if (off && ra.status === 'todo') {
+      const j = officialPlan(cur).get(i);
+      if (j === null) {
+        notes.push('Nessuno scambio ufficiale corrisponde a questo: probabilmente non è uno scambio di gioco (riscaldamento, replay, palla morta). Scartalo');
+        off = null;
+      } else if (j != null && j > off.k) {
+        missing = { set: cur.set, from: off.k, to: j };
+        notes.push(`Prima di questo scambio il punto a punto ne ha ${j - off.k} che il video non ha rilevato: aggiungil${j - off.k === 1 ? 'o' : 'i'} dai dati ufficiali (➕)`);
+        off = null;
+      }
+    }
     if (off) force = teamOf(off.r.winner);
     else if (pn >= 0.8 || pn <= 0.2) {
       const w = sideTeam(pn >= 0.5);
@@ -365,7 +406,7 @@ export function createAuto(app) {
       const exp = cur.homeNear ? { near: tc['*'], far: tc.a } : { near: tc.a, far: tc['*'] };
       if (swappedVs(exp, ra.colours) === true) notes.push('Le maglie dicono che le squadre hanno cambiato campo rispetto a quanto registrato: usa ⇅ Campo nella scheda Scouting');
     }
-    return { rallyIdx: i, events, text: events.map(tokenOf).join(' '), notes, info, official, raw: rawReading(raw.events), feats, pn, homeNear: cur.homeNear, conf: official?.applied ? Math.max(out.conf, 0.9) : out.conf, labels };
+    return { rallyIdx: i, events, text: events.map(tokenOf).join(' '), notes, info, official, missing, raw: rawReading(raw.events), feats, pn, homeNear: cur.homeNear, conf: official?.applied ? Math.max(out.conf, 0.9) : out.conf, labels };
   }
   function parseProposal(text, base) {
     const toks = text.trim().split(/\s+/).filter(Boolean);
@@ -547,10 +588,11 @@ export function createAuto(app) {
       proposal.official ? h('div', { class: 'official-box small' }, h('b', {}, '📋 Ufficiale: '), proposal.official.text,
         proposal.info.length ? h('div', { class: 'muted' }, 'Corretto con il punto a punto: ' + proposal.info.join(' · ')) : null) : null,
       !proposal.official && proposal.pn != null ? h('p', { class: 'muted small' }, `Punto: ${Math.round(Math.max(proposal.pn, 1 - proposal.pn) * 100)}% ${app.match.teams[(proposal.pn >= 0.5) === proposal.homeNear ? '*' : 'a'].name} secondo il modello (impara da ogni scambio confermato: ${winModel.n ? `${Math.round((100 * winModel.ok) / winModel.n)}% giusti su ${winModel.n}` : 'ancora nessuno'})`) : null,
-      proposal.ocr ? h('ul', { class: 'notes ocr-results' }, proposal.ocr.map((r) => { const e = proposal.events.filter((x) => x.kind === 'skill')[r.k]; return h('li', {}, `${r.k + 1}. ${e ? e.skill : ''}: ${r.msg}`); })) : null,
+      proposal.ocr ? h('ul', { class: 'notes ocr-results' }, proposal.ocr.map((r) => { const e = proposal.events.filter((x) => x.kind === 'skill')[r.k]; return h('li', { 'data-tk': e?.tk ?? '' }, `${r.k + 1}. ${e ? e.skill : ''}: ${r.msg}`); })) : null,
       ta, descr,
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn primary', disabled: ra.status === 'accepted', onclick: () => accept() }, '✓ Accetta (Invio)'),
+        proposal.missing ? h('button', { class: 'btn', onclick: () => addMissing(proposal.missing, ra.start) }, `➕ Aggiungi ${proposal.missing.to - proposal.missing.from} dai dati ufficiali`) : null,
         h('button', { class: 'btn', onclick: () => discard() }, 'Scarta'),
         h('button', { class: 'btn', onclick: () => { proposal = buildProposal(selIndex); render(); } }, '↺ Ripristina'),
         h('button', { class: 'btn', title: 'Riconosce chi tocca: galleria dei giocatori registrati (👕) + numeri di maglia', onclick: () => readNumbers() }, '👕 Riconosci giocatori'),

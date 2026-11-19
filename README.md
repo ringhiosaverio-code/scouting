@@ -110,6 +110,34 @@ squadra di SuperLega, Serie A2 o Serie A3 (numeri, nomi, ruoli, dal sito legavol
 ruoli guidano la rotazione. Il riconoscitore dei numeri è addestrato anche sulle maglie
 vere di queste squadre (foto ufficiali dei giocatori, usate solo per l'addestramento).
 
+**Dati ufficiali (tabellini e punto a punto Legavolley)**: per le partite di SuperLega,
+A2 e A3 l'analisi si confronta con il **punto a punto ufficiale** (per ogni scambio: chi
+batte, ace o errore, ogni attacco con il suo autore, attacco punto/errore/murato, muro
+punto, ricezione errata, chi fa punto) e con il **tabellino** (formazioni di partenza di
+ogni set, statistiche per giocatore). Nella scheda Analisi auto, **📋 Carica dati
+ufficiali** propone le partite dell'archivio (`data/legavolley/`, scaricato con
+`tools/legavolley.mjs`) con le due squadre della partita; per una partita non in archivio
+basta salvare dal sito le due pagine (Ctrl+S) e caricarle. Poi:
+- ogni proposta viene **corretta** con lo scambio ufficiale corrispondente al punteggio:
+  battitore, esito della battuta, attaccanti, azione decisiva e punto (le correzioni sono
+  elencate); un tocco decisivo non visto viene aggiunto;
+- gli scambi rilevati vengono **allineati in blocco** a quelli ufficiali: uno scambio
+  perso dal video si aggiunge con un clic (➕) dai dati ufficiali, uno falso (riscaldamento,
+  replay) viene segnalato;
+- le **formazioni** di ogni set si precompilano dal tabellino;
+- **verifica**: per gli scambi accettati l'app confronta la lettura del solo video con i
+  dati ufficiali (squadra al servizio, battitore, esito della battuta, chi vince, numero di
+  attacchi, attaccanti) e mostra le percentuali: si vede dove sbaglia; nell'elenco 📋✓/📋✗;
+- **apprendimento**: i numeri ufficiali insegnano alla galleria dei giocatori chi è chi
+  (dove non contraddicono un numero ben letto), e il modello del punto impara dagli esiti.
+
+**Chi vince il punto (modello che impara)**: oltre all'atterraggio della palla, usa la
+regola del **cambio palla** (chi vince batte lo scambio dopo: si vede nel video anche
+quando l'atterraggio no), l'ultimo tocco e chi batte. I pesi iniziali vengono da 8.728
+scambi ufficiali (`data/dynamics.json`: in SuperLega chi batte vince il 32% degli scambi, chi
+attacca per ultimo il 75%); a ogni scambio confermato (dallo scout o dal punto a punto) il
+modello si aggiorna e impara quanto fidarsi di ciascun indizio con quella telecamera.
+
 Le incertezze vengono **segnalate** nella proposta: palla vicino alla linea, tocco o
 alzata non visti e quindi dedotti, atterraggio non visto, battitore incoerente con la
 rotazione. "Accetta in serie" si ferma al primo scambio con una segnalazione.
@@ -256,12 +284,16 @@ js/lib/                      logica pura (testata con node, senza DOM)
   stats.js, validate.js      statistiche e controllo dati
   dvw.js                     import/export DataVolley
   store.js                   salvataggio locale
+  legavolley.js              tabellino e punto a punto ufficiali (lettura, forma compatta, allineamento)
+  winmodel.js                chi vince lo scambio: modello che impara dagli esiti confermati
 js/ui/                       schermate (scouting, partita, report, analisi auto, video analisi, impostazioni)
 js/vision/                   analisi automatica: autocourt.js (calibrazione dalle linee), camera.js
                              (telecamera dal pavimento), cv.js (sfondo, sagome, candidati palla), tracker.js,
                              ballistic.js (camera 3D, voli balistici), rally.js (scambi → codici),
                              jersey.js (numeri di maglia), analyzer.js + worker.js (browser)
-tools/                       server statico, generatore di video sintetici, banco di prova
+data/                        rose Legavolley, archivio dei punto a punto ufficiali, dinamiche di gioco
+tools/                       server statico, generatore di video sintetici, banco di prova,
+                             legavolley.mjs (archivio ufficiale), dynamics.mjs, digits/ e ball/ (addestramento reti)
 tests/                       test unitari (node --test) e test end-to-end (Playwright)
 ```
 
@@ -273,6 +305,8 @@ npm run bench                              # banco di prova dell'analisi automat
 node tools/synth-video.mjs v.webm v.json   # crea un video sintetico di prova + verità (richiede ffmpeg)
 node tests/e2e/mega.mjs video.mp4                                            # link MEGA (finto MEGA locale con file cifrato)
 node tests/e2e/link.mjs video.mp4                                            # video da link (diretto con/senza CORS, YouTube simulato)
+node tests/e2e/official.mjs                                                  # dati ufficiali Legavolley: correzioni, scambi persi, verifica
+NODE_USE_ENV_PROXY=1 node tools/legavolley.mjs && node tools/dynamics.mjs   # aggiorna l'archivio ufficiale e le dinamiche
 npm start & node tests/e2e/smoke.mjs http://localhost:8080/ video.mp4 /tmp   # end-to-end (richiede Playwright)
 ```
 
@@ -287,3 +321,6 @@ e le convenzioni dei codici derivano da [ovscout2](https://github.com/openvolley
 e [datavolley](https://github.com/openvolley/datavolley) (MIT, © gli autori dei pacchetti,
 openvolley.org); il file `samples/esempio.dvw` proviene da `datavolley`.
 DataVolley è un marchio dei rispettivi proprietari; questo progetto non è affiliato.
+Rose, tabellini e punto a punto in `data/` provengono dal sito della Lega Pallavolo Serie A
+(legavolley.it): dati pubblici delle partite, inclusi per comodità d'uso; questo progetto
+non è affiliato alla Lega.

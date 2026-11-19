@@ -217,6 +217,23 @@ segnalata per la revisione.
    | MEGA (`mega.nz/file/…#chiave`) | sì | sì: il service worker scarica e decifra (AES-CTR) solo i tratti che stai guardando |
    | YouTube (anche `youtu.be`, `live/`, `shorts/`, `?t=`) | sì, con i controlli dell'app | no: YouTube non permette di leggere i fotogrammi |
    | Flusso HLS (`.m3u8`) | sì | no |
+   | VolleyMetrics / Hudl, con il collegamento rapido 🏐 (vedi sotto) | sì, finché il link temporaneo è valido | solo se il sito consente la lettura dei fotogrammi; altrimenti scarica il video |
+
+   **VolleyMetrics / Hudl**: il link della pagina della partita non è il video (è protetto
+   dall'accesso al tuo account), quindi incollato da solo non basta: l'app spiega cosa fare.
+   - **Collegamento rapido 🏐 Apri in VolleyScout**: un pulsante da trascinare una volta
+     nella barra dei preferiti (in 🔗 Link → VolleyMetrics). Sulla pagina della partita, con
+     il video avviato, un clic apre VolleyScout con quel video in streaming, in una nuova
+     partita (squadre dal titolo) o in quella aperta. Legge solo l'indirizzo del video che la
+     pagina sta già riproducendo (niente password né cookie) e lo passa dopo il `#`, quindi
+     non arriva a nessun server. Questi indirizzi sono temporanei e personali: l'app ne
+     registra la scadenza e alla riapertura, se è scaduto, chiede di ricollegarlo.
+   - **Video e DVW scaricati** (se l'account lo consente): Apri il `.dvw` (codici,
+     formazioni e tempo del video di ogni codice; i file VolleyMetrics vengono riconosciuti)
+     e poi il video: Video analisi e report subito pronti, e analisi automatica possibile.
+     Si può anche aprire il DVW e poi usare il collegamento rapido scegliendo "nella
+     partita aperta": i codici si collegano al video in streaming con i loro tempi.
+   - Video protetti da DRM o flussi DASH (`.mpd`) non si possono riprodurre fuori dal sito.
 
    **Telecamera laterale**: oltre alla ripresa da dietro il fondo campo è supportata
    quella dalla tribuna. La calibrazione automatica riconosce da sola la vista; in
@@ -313,6 +330,7 @@ npm run bench                              # banco di prova dell'analisi automat
 node tools/synth-video.mjs v.webm v.json   # crea un video sintetico di prova + verità (richiede ffmpeg)
 node tests/e2e/mega.mjs video.mp4                                            # link MEGA (finto MEGA locale con file cifrato)
 node tests/e2e/link.mjs video.mp4                                            # video da link (diretto con/senza CORS, YouTube simulato)
+node tests/e2e/volleymetrics.mjs                                             # VolleyMetrics/Hudl simulato: collegamento rapido, link scaduti
 node tests/e2e/official.mjs                                                  # dati ufficiali Legavolley: correzioni, scambi persi, verifica
 NODE_USE_ENV_PROXY=1 node tools/legavolley.mjs && node tools/dynamics.mjs   # aggiorna l'archivio ufficiale e le dinamiche
 npm start & node tests/e2e/smoke.mjs http://localhost:8080/ video.mp4 /tmp   # end-to-end (richiede Playwright)

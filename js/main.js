@@ -14,7 +14,7 @@ import { createSettings } from './ui/settings.js';
 import { createAuto } from './ui/auto.js';
 import { officialLineup } from './ui/official.js';
 import { SKILLS, DEFAULT_SETTINGS } from './lib/constants.js';
-import { classifyVideoUrl } from './lib/videosrc.js';
+import { classifyVideoUrl, bookmarkletHref, teamsFromTitle } from './lib/videosrc.js';
 import { resolveMega, megaStreamUrl } from './lib/mega.js';
 import { createYouTubeBinding } from './ui/ytplayer.js';
 
@@ -251,6 +251,12 @@ function loadScript(src) {
 app.openVideoUrl = async (raw, { quiet = false } = {}) => {
   const c = classifyVideoUrl(raw);
   if (c.kind === 'invalid') { toast(c.reason, 'error', 5000); return false; }
+  if (c.kind === 'volleymetrics') { if (!quiet) app.openVolleyMetricsHelp(c); return false; }
+  if (c.temporary && c.expires && new Date(c.expires) < new Date()) {
+    toast(`Questo link video è scaduto il ${new Date(c.expires).toLocaleString()}: riaprilo dalla pagina della partita con il collegamento rapido 🏐`, 'error', 9000);
+    if (!quiet) app.openVolleyMetricsHelp(null);
+    return false;
+  }
   if (window.VSP_NO_SW) { toast('Nell\'anteprima su claude.ai i video da link esterni sono bloccati dal browser. Apri l\'app da GitHub Pages o sul PC (npm start).', 'error', 9000); return false; }
   resetVideo();
   const remember = (url) => {
@@ -259,6 +265,7 @@ app.openVideoUrl = async (raw, { quiet = false } = {}) => {
     const file = (() => { try { return decodeURIComponent(new URL(c.url).pathname.split('/').pop()); } catch { return ''; } })();
     app.match.video.name = c.kind === 'youtube' ? `YouTube ${c.id}` : c.provider === 'drive' ? 'Video Google Drive' : (file || url).slice(0, 80);
     app.match.video.url = url;
+    if (c.temporary) app.match.video.expires = c.expires || 'temp'; else delete app.match.video.expires;
     app.save();
     clear($('#video-reopen'));
   };
@@ -314,8 +321,66 @@ app.openVideoUrl = async (raw, { quiet = false } = {}) => {
   remember(c.kind === 'direct' && c.original ? c.original : c.url);
   renderActive();
   if (!quiet) toast(pixels ? 'Video in streaming dal link (non scaricato).' : 'Video in streaming. Il server non consente la lettura dei fotogrammi (CORS): analisi automatica non disponibile, scouting a clic sì.', pixels ? 'ok' : 'warn', 7000);
+  if (!quiet && c.temporary) toast(`Link temporaneo${c.expires ? ` (valido fino al ${new Date(c.expires).toLocaleString()})` : ''}: per riaprire la partita più avanti usa di nuovo il collegamento rapido dalla pagina del video, oppure scarica il video.`, 'info', 9000);
   return true;
 };
+
+// ---------- VolleyMetrics / Hudl ----------
+// La pagina della partita su VolleyMetrics non è il video: il video è protetto dall'accesso
+// all'account. Il collegamento rapido (preferito del browser) prende l'indirizzo del video dalla
+// pagina aperta e lo passa a VolleyScout; in alternativa si scaricano video e DVW.
+app.openVolleyMetricsHelp = (c) => {
+  const appUrl = location.origin + location.pathname;
+  const href = bookmarkletHref(appUrl);
+  const bm = h('a', { class: 'btn primary bookmarklet', href, draggable: 'true', title: 'Trascinami nella barra dei preferiti', onclick: (e) => { e.preventDefault(); toast('Trascina il pulsante nella barra dei preferiti del browser (non cliccarlo qui)', 'info', 5000); } }, '🏐 Apri in VolleyScout');
+  const copy = h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(decodeURIComponent(href)); toast('Codice copiato: crea un nuovo preferito e incollalo come indirizzo', 'ok', 6000); } catch { toast('Copia non riuscita', 'error'); } } }, '📋 Copia il codice (tablet / Safari)');
+  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://…/video.mp4 oppure …/master.m3u8' });
+  const dlg = modal('Video da VolleyMetrics / Hudl', h('div', { class: 'col gap' },
+    c ? h('p', { class: 'warn-box' }, 'Il link incollato è la pagina della partita su ', h('b', {}, c.host), ', non il file video: il video è protetto dall\'accesso al tuo account e VolleyScout non può aprirlo da solo. Usa uno di questi modi:') : null,
+    h('h4', {}, '1 · Collegamento rapido (consigliato)'),
+    h('ol', { class: 'small link-help' },
+      h('li', {}, 'Trascina questo pulsante nella barra dei preferiti: ', bm, ' ', copy),
+      h('li', {}, 'Apri la partita su VolleyMetrics (o Hudl) con il tuo account e avvia il video.'),
+      h('li', {}, 'Clicca il preferito ', h('b', {}, '🏐 Apri in VolleyScout'), ': si apre VolleyScout con quel video in streaming (scegli se in una nuova partita o in quella aperta, ad esempio dopo aver aperto il DVW).')),
+    h('p', { class: 'muted small' }, 'Il collegamento legge solo l\'indirizzo del video che la pagina sta già riproducendo (niente password né cookie). Questi indirizzi sono di solito temporanei (alcune ore) e personali: non condividerli. Se il video è protetto (DRM) o il sito non permette ad altri di leggerlo, non si potrà riprodurre: usa il modo 2.'),
+    h('h4', {}, '2 · Video e scout scaricati'),
+    h('p', { class: 'small' }, 'Se il tuo account permette di scaricare la partita: apri il file ', h('b', {}, '.dvw'), ' con ', h('b', {}, 'Apri'), ' (codici, formazioni e tempi del video) e poi il ', h('b', {}, 'video MP4'), ' come file: Video analisi e report sono subito utilizzabili, e anche l\'analisi automatica.'),
+    h('div', { class: 'row gap wrap' }, h('button', { class: 'btn', onclick: () => { dlg.close(); $('#btn-open')?.click(); } }, '📂 Apri DVW'), h('button', { class: 'btn', onclick: () => { dlg.close(); app.openVideo(); } }, '🎬 Apri video MP4')),
+    h('h4', {}, '3 · Indirizzo diretto del video'),
+    h('div', { class: 'row gap' }, inp, h('button', { class: 'btn', onclick: async () => { const u = inp.value.trim(); if (!u) return; dlg.close(); await app.openVideoUrl(u); } }, 'Apri')),
+  ), { wide: true });
+};
+
+// VolleyScout aperto dal collegamento rapido: #video=…&titolo=…&da=…
+// (dopo il #: l'indirizzo non arriva al server che ospita l'app)
+async function openFromHash() {
+  const hp = new URLSearchParams(location.hash.slice(1));
+  const url = hp.get('video');
+  if (!url) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const title = (hp.get('titolo') || '').slice(0, 120), from = hp.get('da') || '';
+  const cur = app.match;
+  const empty = !cur.events.length && !cur.video.url && !cur.video.name;
+  let target = 'new';
+  if (!empty) {
+    target = await new Promise((res) => {
+      modal('Video da ' + (from || 'link'), h('div', {}, h('p', {}, h('b', {}, title || 'Video'), ` (${from})`), h('p', {}, `Aprirlo in una nuova partita o nella partita aperta (${cur.teams['*'].name} – ${cur.teams.a.name}, ${cur.events.filter((e) => e.kind === 'skill').length} codici)?`), h('p', { class: 'muted small' }, 'Se hai appena aperto il DVW della stessa partita scegli "Nella partita aperta": i codici si collegano al video con i loro tempi.')), {
+        actions: [{ label: 'Nella partita aperta', onClick: () => { res('current'); return true; } }, { label: 'Nuova partita', primary: true, onClick: () => { res('new'); return true; } }],
+        onClose: () => res(null),
+      });
+    });
+    if (!target) return;
+  }
+  if (target === 'new') {
+    const m = newMatch();
+    const tt = teamsFromTitle(title);
+    if (tt) { m.teams['*'].name = tt[0].slice(0, 40); m.teams.a.name = tt[1].slice(0, 40); }
+    app.setMatch(m);
+  }
+  const ok = await app.openVideoUrl(url);
+  if (ok && title) { app.match.video.name = title; app.save(); }
+  if (ok) app.showTab(target === 'new' ? 'setup' : 'playlist');
+}
 // MEGA: il service worker scarica e decifra solo i tratti richiesti dal lettore
 async function swReady() {
   if (!('serviceWorker' in navigator) || window.VSP_NO_SW || !location.protocol.startsWith('http')) return false;
@@ -351,7 +416,7 @@ app.video.addEventListener('error', async () => {
   if (await openMega(vi.link, t)) toast('Collegamento MEGA rinnovato', 'info');
 });
 app.openVideoLink = () => {
-  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://… (YouTube, MEGA, Google Drive, Dropbox, MP4, .m3u8)', value: /^https?:/.test(app.match.video.url || '') ? app.match.video.url : '' });
+  const inp = h('input', { type: 'url', class: 'grow', placeholder: 'https://… (YouTube, MEGA, Google Drive, Dropbox, VolleyMetrics, MP4, .m3u8)', value: /^https?:/.test(app.match.video.url || '') ? app.match.video.url : '' });
   const go = async () => { const u = inp.value; dlg.close(); await app.openVideoUrl(u); };
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
   const dlg = modal('Video da link', h('div', { class: 'col gap' },
@@ -362,7 +427,8 @@ app.openVideoLink = () => {
       h('li', {}, h('b', {}, 'YouTube'), ' — scouting a clic, playlist e tempi dei tocchi. Analisi e calibrazione automatiche non disponibili (YouTube non permette di leggere i fotogrammi): calibra a mano.'),
       h('li', {}, h('b', {}, 'Link diretto'), ' a un file MP4/WebM/MOV, ', h('b', {}, 'Dropbox'), ' o ', h('b', {}, 'Google Drive'), ' (condiviso "chiunque abbia il link") — tutto, compresa l\'analisi automatica se il server lo consente.'),
       h('li', {}, h('b', {}, 'MEGA'), ' (link del singolo file, con la chiave dopo #) — tutto, compresa l\'analisi automatica: il video viene decifrato a pezzi mentre lo guardi.'),
-      h('li', {}, h('b', {}, 'Flussi HLS'), ' (.m3u8) — scouting a clic.'))),
+      h('li', {}, h('b', {}, 'Flussi HLS'), ' (.m3u8) — scouting a clic.'),
+      h('li', {}, h('b', {}, 'VolleyMetrics / Hudl'), ' — il link della pagina è protetto dal tuo account: usa il ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); dlg.close(); app.openVolleyMetricsHelp(null); } }, 'collegamento rapido 🏐'), ' o scarica video e DVW.'))),
   { actions: [{ label: 'Annulla' }, { label: 'Apri link', primary: true, onClick: () => { go(); return false; } }] });
 };
 function loadVideoFile(file) {
@@ -385,7 +451,14 @@ async function offerVideoReopen() {
   clear(box);
   const v = app.match.video;
   if (!v.name || app.video.currentSrc) return;
-  if (/^https?:/.test(v.url || '')) { app.openVideoUrl(v.url, { quiet: true }); return; }
+  if (/^https?:/.test(v.url || '')) {
+    if (v.expires && v.expires !== 'temp' && new Date(v.expires) < new Date()) {
+      box.append(h('button', { class: 'btn small', title: 'Il link temporaneo del video è scaduto', onclick: () => app.openVolleyMetricsHelp(null) }, '🏐 Link scaduto: riapri il video'));
+      return;
+    }
+    app.openVideoUrl(v.url, { quiet: true });
+    return;
+  }
   if (v.url && !/^blob:/.test(v.url)) { app.video.src = v.url; app.videoInfo = { kind: 'file', pixels: true }; return; }
   const fh = await getHandle('video:' + app.match.id);
   box.append(h('button', {
@@ -426,6 +499,8 @@ async function openFile() {
       app.setMatch(m);
       dlg.close();
       toast(`Aperto ${f.name}`, 'ok');
+      const withVt = m.events.filter((e) => e.kind === 'skill' && e.vt != null).length;
+      if (/\.dvw$/i.test(f.name) && withVt) toast(`${m.meta.source === 'volleymetrics' ? 'Scout VolleyMetrics: ' : ''}${withVt} codici con il tempo del video. Apri il video della partita (file, link o collegamento rapido 🏐) per la Video analisi.`, 'info', 9000);
     } catch (e) { toast('Errore apertura: ' + e.message, 'error', 5000); }
   };
   const list = h('div', { class: 'saved-list' }, saved.length ? saved.map((s) => h('div', { class: 'saved-item' },
@@ -500,6 +575,9 @@ function init() {
       app.showTab(window.VSP_PRELOAD_TAB || 'scout');
     }).catch(() => toast('Impossibile caricare la partita preparata', 'error'));
   }
+
+  openFromHash();
+  window.addEventListener('hashchange', openFromHash);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.VSP_NO_SW) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

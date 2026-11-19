@@ -215,7 +215,13 @@ export function fromDVW(text) {
     });
   }
   const vid = (sec.VIDEO || []).find((l) => /^Camera0=/.test(l));
-  if (vid) match.video.name = vid.split('=')[1];
+  if (vid) {
+    const v = vid.slice(vid.indexOf('=') + 1).trim();
+    match.video.name = v.split(/[\\/]/).pop().split('?')[0] || v;
+    if (/^https?:\/\//i.test(v)) match.video.url = v; // video online indicato nel file
+  }
+  // file VolleyMetrics: convenzioni di valutazione proprie (lette come DataVolley standard)
+  if (/volleymetric/i.test(text)) { match.meta.scout ||= 'VolleyMetrics'; match.meta.source = 'volleymetrics'; }
 
   const events = [];
   let pendingLineup = null;

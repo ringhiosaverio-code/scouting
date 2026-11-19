@@ -352,3 +352,4 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .mini-table { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
 .mini-table td { padding: 2px 8px 2px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
 .official-card h4 { margin: 8px 0 2px; font-size: 13px; }
+.bookmarklet { cursor: grab; display: inline-block; margin: 2px 0; }

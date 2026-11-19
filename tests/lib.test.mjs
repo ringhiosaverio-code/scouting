@@ -406,3 +406,48 @@ test('modello del punto: cambio palla e apprendimento dagli scambi confermati', 
   for (let k = 0; k < 40; k++) updateWinModel(m, winFeatures(ra('far', 'near', { X: [0, 0, 0] }), null, false, 'near'), false);
   assert.ok(m.w[0] < w0);
 });
+
+test('link VolleyMetrics/Hudl, link firmati temporanei, collegamento rapido', async () => {
+  const { classifyVideoUrl, bookmarkletHref, teamsFromTitle, grabVideo } = await import('../js/lib/videosrc.js');
+  assert.equal(classifyVideoUrl('https://app.volleymetrics.hudl.com/#/matches/123').kind, 'volleymetrics');
+  assert.equal(classifyVideoUrl('https://www.hudl.com/video/3/1/abc').kind, 'volleymetrics');
+  let c = classifyVideoUrl('https://d1.cloudfront.net/v/m.mp4?Expires=1790000000&Signature=x&Key-Pair-Id=K');
+  assert.equal(c.kind, 'direct'); assert.equal(c.temporary, true); assert.equal(c.expires, new Date(1790000000 * 1000).toISOString());
+  c = classifyVideoUrl('https://b.s3.amazonaws.com/a.mp4?X-Amz-Date=20261119T120000Z&X-Amz-Expires=3600&X-Amz-Signature=ab');
+  assert.equal(c.expires, '2026-11-19T13:00:00.000Z');
+  c = classifyVideoUrl('https://vh.hudl.com/x/master.m3u8?hdnts=exp=1790000000~hmac=a');
+  assert.equal(c.kind, 'hls'); assert.equal(c.provider, 'volleymetrics'); assert.ok(c.expires);
+  assert.equal(classifyVideoUrl('https://x.org/a.mp4').temporary, undefined);
+  assert.equal(classifyVideoUrl('https://x.org/a.mpd').kind, 'invalid');
+  assert.deepEqual(teamsFromTitle('Perugia vs Padova | Hudl'), ['Perugia', 'Padova']);
+  assert.deepEqual(teamsFromTitle('Fano - Macerata'), ['Fano', 'Macerata']);
+  // il collegamento rapido è un link javascript: valido
+  const href = bookmarkletHref('https://esempio.it/scouting/');
+  assert.ok(href.startsWith('javascript:'));
+  assert.doesNotThrow(() => new Function(decodeURIComponent(href).slice('javascript:'.length)));
+  // su una pagina con un <video> trova il video e apre l'app con l'indirizzo dopo il #
+  let opened = null;
+  const fakeDoc = { title: 'Alfa vs Beta | Hudl', querySelectorAll: (q) => (q === 'iframe' ? [] : [{ currentSrc: 'https://cdn.x/v.mp4?Expires=1&Signature=s' }]) };
+  Object.assign(globalThis, { document: fakeDoc, location: { hostname: 'app.volleymetrics.hudl.com' }, window: { open: (u) => { opened = u; } }, performance: { getEntriesByType: () => [] } });
+  try {
+    grabVideo('https://esempio.it/scouting/');
+    const hp = new URLSearchParams(opened.split('#')[1]);
+    assert.equal(hp.get('video'), 'https://cdn.x/v.mp4?Expires=1&Signature=s');
+    assert.equal(hp.get('titolo'), 'Alfa vs Beta');
+    // lettore HLS (video in blob:): si prende il flusso .m3u8 scaricato dalla pagina
+    fakeDoc.querySelectorAll = (q) => (q === 'iframe' ? [] : [{ currentSrc: 'blob:https://app/x' }]);
+    globalThis.performance = { getEntriesByType: () => [{ name: 'https://cdn.x/a.js' }, { name: 'https://cdn.x/hls/master.m3u8?token=t' }, { name: 'https://cdn.x/hls/720/index.m3u8?token=t' }, { name: 'https://cdn.x/hls/720/seg1.ts' }] };
+    grabVideo('https://esempio.it/scouting/');
+    assert.equal(new URLSearchParams(opened.split('#')[1]).get('video'), 'https://cdn.x/hls/master.m3u8?token=t');
+  } finally { for (const k of ['document', 'location', 'window', 'performance']) delete globalThis[k]; }
+});
+
+test('DVW: video online indicato nel file e file VolleyMetrics', () => {
+  assert.ok(fixture.includes('[3SCOUT]'));
+  const t = fixture.replace('[3SCOUT]', '[3VIDEO]\r\nCamera0=https://video.esempio.it/partite/finale.mp4\r\n[3SCOUT]').replace('[3SCOUT]', '[3SCOUT]').replace(/^/, '');
+  const m = fromDVW(t.replace('[3VIDEO]', '[3COMMENTS]\r\nScout: VolleyMetrics\r\n[3VIDEO]'));
+  assert.equal(m.video.url, 'https://video.esempio.it/partite/finale.mp4');
+  assert.equal(m.video.name, 'finale.mp4');
+  assert.equal(m.meta.source, 'volleymetrics');
+  assert.equal(fromDVW(fixture).meta.source, undefined);
+});

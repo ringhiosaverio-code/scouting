@@ -60,7 +60,35 @@ export function createSetup(app) {
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn', onclick: () => { T.players.push(newPlayer({ number: nextNum(T) })); app.touch(); drawRows(); } }, '+ Giocatore'),
         h('button', { class: 'btn', onclick: () => pasteRoster(T, drawRows) }, '📋 Incolla rosa'),
-        h('button', { class: 'btn', onclick: () => importFromDvw(t) }, '⬆ Da file DVW')));
+        h('button', { class: 'btn', onclick: () => importFromDvw(t) }, '⬆ Da file DVW'),
+        h('button', { class: 'btn', title: 'Rose ufficiali di SuperLega, Serie A2 e Serie A3 (Lega Pallavolo Serie A)', onclick: () => importFromLega(t) }, '🏐 Da Legavolley')));
+  }
+
+  // rose ufficiali della Lega Pallavolo Serie A (data/legavolley-*.json, dal sito legavolley.it):
+  // numeri e ruoli veri servono al riconoscimento (si cerca solo tra i numeri della rosa)
+  let legaData = null;
+  async function importFromLega(t) {
+    try { legaData ||= await (await fetch(new URL('../../data/legavolley-2026-27.json', import.meta.url))).json(); } catch (e) { toast('Rose non disponibili: ' + e.message, 'error'); return; }
+    const search = h('input', { type: 'search', placeholder: 'Cerca squadra o città…', class: 'grow' });
+    const list = h('div', { class: 'lega-list' });
+    let serie = 'SuperLega';
+    const tabs = h('div', { class: 'row gap' });
+    const draw = () => {
+      clear(tabs); clear(list);
+      for (const s2 of ['SuperLega', 'Serie A2', 'Serie A3']) tabs.append(h('button', { class: `btn small ${s2 === serie ? 'primary' : ''}`, onclick: () => { serie = s2; draw(); } }, s2));
+      const q = search.value.trim().toLowerCase();
+      for (const sq of legaData.squadre.filter((x) => (q ? x.nome.toLowerCase().includes(q) : x.serie === serie))) {
+        list.append(h('button', { class: 'btn lega-team', onclick: () => {
+          const T = app.match.teams[t];
+          const code = (sq.codice || sq.nome.replace(/[^A-Za-z]/g, '')).slice(0, 3).toUpperCase();
+          Object.assign(T, { name: sq.nome, code, players: sq.giocatori.map((g) => newPlayer({ number: g.number, lastName: g.lastName, firstName: g.firstName, role: g.role })) });
+          app.touch(); dlg.close(); render(); toast(`${sq.nome}: ${sq.giocatori.length} giocatori importati da Legavolley`);
+        } }, h('b', {}, sq.nome), h('span', { class: 'muted small' }, ` ${sq.serie} · ${sq.giocatori.length}`)));
+      }
+    };
+    search.addEventListener('input', draw);
+    draw();
+    const dlg = modal('Rosa da Legavolley', h('div', { class: 'col gap' }, tabs, search, list, h('p', { class: 'muted small' }, `${legaData.fonte} · aggiornate al ${legaData.aggiornato}. Controlla i numeri se la rosa è cambiata.`)), { wide: true });
   }
   const nextNum = (T) => { const used = new Set(T.players.map((p) => Number(p.number))); for (let n = 1; n < 100; n++) if (!used.has(n)) return n; return null; };
 

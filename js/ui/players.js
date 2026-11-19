@@ -95,9 +95,23 @@ function fgTest(frame, bg) {
   return { cur, k, isFg: (x, y) => { const i = Math.min(bg.h - 1, Math.floor(y / k)) * bg.w + Math.min(bg.w - 1, Math.floor(x / k)); return Math.abs(cur[i] - bg.gray[i]) > 30; } };
 }
 
+// in campo ci sono 12 giocatori, 6 per metà campo: se la rete ne trova di più (arbitri,
+// giocatori in panchina vicino alle linee, doppioni) si tengono i 6 più probabili per parte
+export function keepTwelve(cal, frame, boxes) {
+  if (!cal) return boxes.slice(0, 12);
+  const info = boxes.map((b) => {
+    const c = applyH(cal.H, { x: (b[0] + b[2]) / 2 / frame.w, y: b[3] / frame.h });
+    const inside = c.x >= 0.5 && c.x <= 3.5 && c.y >= 0.5 && c.y <= 6.5;
+    return { b, near: c.y < 3.5, rank: (b[4] ?? 0.5) + (inside ? 1 : 0) };
+  });
+  const out = [];
+  for (const side of [true, false]) out.push(...info.filter((x) => x.near === side).sort((a, b) => b.rank - a.rank).slice(0, 6).map((x) => x.b));
+  return out;
+}
+
 async function silhouettes(video, frame, cal = null) {
   const nn = await neuralPeople(frame);
-  if (nn) return nn.filter((b) => onCourt(cal, frame, b)).map((b) => b.slice(0, 4));
+  if (nn) return keepTwelve(cal, frame, nn.filter((b) => onCourt(cal, frame, b))).map((b) => b.slice(0, 4));
   const bg = await background(video);
   const { cur, k, isFg } = fgTest(frame, bg);
   const r = processFrame({ cur, bg: bg.gray, w: bg.w, h: bg.h, opts: { playerMinArea: Math.round(bg.w * bg.h * 0.0008) } });
@@ -268,9 +282,11 @@ export function startPlayerRegistration(app, { onDone } = {}) {
     const todo = items.filter((i) => i.status === 'todo');
     const guessed = todo.filter((i) => i.guess != null);
     const cnt = (t) => `${app.match.teams[t].name} ${galleryCount(app.match, t)}/${app.match.teams[t].players.length}`;
+    const onC = (t) => items.filter((i) => i.status !== 'skip' && i.team === t).length;
     bar.append(
       h('strong', {}, '👕 Giocatori  '),
       h('span', {}, frame ? 'Clicca una sagoma e scegli il numero; se un giocatore manca o è unito a un altro, trascina un riquadro attorno a lui. ' : 'Ricerca delle sagome… '),
+      frame ? h('span', { class: onC('*') + onC('a') === 12 ? 'ok' : 'warn' }, `In campo: ${onC('*')}+${onC('a')}/12${onC('*') + onC('a') < 12 ? ' (trascina un riquadro sui mancanti)' : ''}  `) : null,
       h('span', { class: 'muted' }, `Registrati: ${cnt('*')} · ${cnt('a')}`),
       h('span', { class: 'spacer' }),
       h('button', { class: 'btn small', title: 'Secondo tentativo con un OCR generico (Tesseract) per le sagome rimaste senza proposta', onclick: () => ocrAll() }, '🔤 OCR'),

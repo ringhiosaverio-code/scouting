@@ -41,7 +41,11 @@ export async function captureAndProcess(o) {
   const bgReady = new Promise((r) => { resolveBg = r; });
   worker.onmessage = (ev) => {
     const m = ev.data;
-    if (m.type === 'result') { pending--; if (m.t != null) results.push({ t: m.t, balls: m.balls, players: m.players, vd: m.vd }); else if (m.cut != null) cuts.push(m.cut); }
+    if (m.type === 'result') {
+      pending--;
+      if (m.t != null) { const f = { t: m.t, balls: m.balls, players: m.players, vd: m.vd }; results.push(f); o.onFrames?.(0, [f], [o.start || 0, o.end ?? Infinity]); }
+      else if (m.cut != null) cuts.push(m.cut);
+    }
     else if (m.type === 'bgready') resolveBg();
     else if (m.type === 'done') resolveDone();
   };
@@ -172,7 +176,12 @@ export async function captureFast(o) {
       const [a, b] = segs[i];
       w.onmessage = (ev) => {
         const m = ev.data;
-        if (m.type === 'results') { for (const f of m.frames) if (f.t < b || i === k - 1) frames.push(f); prog[i] = Math.max(prog[i], (m.t - a) / (b - a)); }
+        if (m.type === 'results') {
+          const fs = m.frames.filter((f) => f.t < b || i === k - 1);
+          frames.push(...fs);
+          o.onFrames?.(i, fs, [a, b]); // cronaca in diretta
+          prog[i] = Math.max(prog[i], (m.t - a) / (b - a));
+        }
         else if (m.type === 'progress') prog[i] = Math.max(prog[i], Math.min(1, (m.t - a) / (b - a)));
         else if (m.type === 'done') { cuts.push(...m.cuts); prog[i] = 1; res(); return; }
         else if (m.type === 'error') { rej(new Error(m.message)); return; }

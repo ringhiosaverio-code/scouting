@@ -3,6 +3,7 @@
 import { h, s, clear, toast, fmtTime, confirmDialog } from './dom.js';
 import { galleryOf, galleryCount, describeTouch } from './players.js';
 import { analyzeBreaks, BREAK_LABEL, swappedVs } from '../vision/breaks.js';
+import { createLiveFeed } from './livefeed.js';
 import { identify, learn } from '../vision/playerid.js';
 import { captureFast, captureAndProcess, geometryFor, ralliesFromFrames, corsFor } from '../vision/analyzer.js';
 import { interpretRally } from '../vision/rally.js';
@@ -19,6 +20,7 @@ export function createAuto(app) {
   const overlay = s('svg', { class: 'overlay passive' });
   const info = h('div', { class: 'now-playing muted' }, 'Analisi automatica: rileva scambi e tocchi dal video e propone i codici.');
   const setupCard = h('div', { class: 'card' });
+  const liveCard = h('div', { class: 'card live-card hidden' });
   const listCard = h('div', { class: 'card auto-list' });
   const propCard = h('div', { class: 'card' });
   root.append(
@@ -26,7 +28,7 @@ export function createAuto(app) {
       h('button', { class: 'btn', onclick: () => select(selIndex - 1) }, '⏮ Scambio prec.'),
       h('button', { class: 'btn', onclick: () => playSel() }, '▶ Rivedi scambio'),
       h('button', { class: 'btn', onclick: () => select(selIndex + 1) }, 'Scambio succ. ⏭'))),
-    h('div', { class: 'right-col' }, setupCard, propCard, listCard));
+    h('div', { class: 'right-col' }, setupCard, liveCard, propCard, listCard));
 
   const video = app.video;
   let running = null; // AbortController
@@ -120,10 +122,16 @@ export function createAuto(app) {
       };
       const cvOpts = { ballColor: app.match.settings.ballColor || 'yellow' };
       let res = null;
+      // cronaca in diretta: scambi riconosciuti e scritti mentre l'analisi procede
+      const vw = video.videoWidth || 1280, vh = video.videoHeight || 720, lw = Math.min(480, vw);
+      const liveGeo = geometryFor(app.match.calibration.points, lw, Math.round(vh * lw / vw), app.match.settings.netHeight);
+      liveCard.classList.remove('hidden');
+      const live = createLiveFeed({ app, geo: liveGeo, ctx: () => (app.rp.current ? ctxNow() : { homeNear: true, serving: '*' }), el: liveCard });
+      const onFrames = (i, fs) => live.push(i, fs);
       // 1) analisi veloce: decodifica diretta del file in più worker (WebCodecs)
       const fastSrc = app.videoFile ? { file: app.videoFile } : /^(https?:|\/|mega-stream)/.test(video.currentSrc) || video.currentSrc.startsWith(location.origin) ? { src: video.currentSrc } : null;
       if (fastSrc && app.match.settings.fastAnalysis !== false) {
-        try { res = await captureFast({ ...fastSrc, start, end, signal: running.signal, cvOpts, onProgress }); }
+        try { res = await captureFast({ ...fastSrc, start, end, signal: running.signal, cvOpts, onProgress, onFrames }); }
         catch (e) {
           if (e.name === 'AbortError') throw e;
           console.warn('analisi veloce non disponibile:', e);
@@ -131,7 +139,8 @@ export function createAuto(app) {
         }
       }
       // 2) ripiego: il video viene riprodotto e letto fotogramma per fotogramma
-      if (!res) res = await captureAndProcess({ src: video.currentSrc, start, end, rate: +(app.match.settings.analysisRate || 2), signal: running.signal, cvOpts, onProgress });
+      if (!res) res = await captureAndProcess({ src: video.currentSrc, start, end, rate: +(app.match.settings.analysisRate || 2), signal: running.signal, cvOpts, onProgress, onFrames });
+      live.finish();
       app._lastFrames = res; // per diagnostica
       const geo = geometryFor(app.match.calibration.points, res.W, res.H, app.match.settings.netHeight);
       let found = ralliesFromFrames(res.frames, geo).map((r) => ({ ...r, id: uid(), status: 'todo' }));

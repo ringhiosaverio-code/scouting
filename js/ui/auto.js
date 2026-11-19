@@ -15,7 +15,7 @@ import { ATTACK_TABLE } from '../lib/constants.js';
 import { readJerseyAt } from '../vision/jersey.js';
 import { officialOf, officialRally, applyOfficial, rawReading, officialCard, describeOfficial, officialEvents } from './official.js';
 import { alignRallies } from '../lib/legavolley.js';
-import { winFeatures, loadWinModel, saveWinModel, pNear, updateWinModel } from '../lib/winmodel.js';
+import { winFeatures, loadWinModel, saveWinModel, pNear, updateWinModel, typicalGap } from '../lib/winmodel.js';
 
 export function createAuto(app) {
   const root = h('div', { class: 'playlist-grid auto-grid' });
@@ -349,7 +349,7 @@ export function createAuto(app) {
     const next = rs[i + 1], br = breakAfter(ra);
     const gapBreak = !!br && (br.kind === 'side' || br.kind === 'setbreak');
     const landSide = raw.winner ? ((raw.winner === '*') === cur.homeNear ? 'near' : 'far') : null;
-    const feats = winFeatures(ra, next && next.status !== 'discarded' ? next : null, gapBreak, landSide);
+    const feats = winFeatures(ra, next && next.status !== 'discarded' ? next : null, gapBreak, landSide, typicalGap(rs));
     const pn = pNear(winModel, feats);
     const sideTeam = (near) => ((near === cur.homeNear) ? '*' : 'a');
     let force = null;
@@ -371,12 +371,13 @@ export function createAuto(app) {
       }
     }
     if (off) force = teamOf(off.r.winner);
-    else if (pn >= 0.8 || pn <= 0.2) {
-      const w = sideTeam(pn >= 0.5);
-      if (w !== raw.winner) {
-        force = w;
-        notes.push(raw.winner ? `Punto: il video indicava ${app.match.teams[raw.winner].name}, ma batte poi ${app.match.teams[w].name} (cambio palla, ${Math.round(Math.max(pn, 1 - pn) * 100)}%): verifica` : `Punto dedotto: batte poi ${app.match.teams[w].name} (cambio palla, ${Math.round(Math.max(pn, 1 - pn) * 100)}%)`);
-      }
+    else {
+      // senza atterraggio decide il modello; contro l'atterraggio visto solo se sicurissimo
+      const w = sideTeam(pn >= 0.5), conf = Math.round(Math.max(pn, 1 - pn) * 100);
+      const why = feats[3] ? 'cambio palla: chi batte dopo' : 'battuta e ultimo tocco';
+      if (!raw.winner) { force = w; notes.push(`Atterraggio non visto: punto dedotto a ${app.match.teams[w].name} (${why}, ${conf}%)`); }
+      else if (w !== raw.winner && conf >= 90) { force = w; notes.push(`Punto: il video indicava ${app.match.teams[raw.winner].name}, ma ${why} dice ${app.match.teams[w].name} (${conf}%): verifica`); }
+      else if (w !== raw.winner && conf >= 75) notes.push(`Punto incerto: ${why} indica ${app.match.teams[w].name} (${conf}%), l'atterraggio ${app.match.teams[raw.winner].name}`);
     }
     const out = force ? interpretRally(ra, { ...ctx, forceWinner: force }) : raw;
     notes.push(...out.notes.filter((n) => !(force && /^Atterraggio non visto/.test(n))));

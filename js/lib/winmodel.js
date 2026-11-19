@@ -11,19 +11,44 @@
 //  3 cambio palla: chi batte lo scambio dopo (0 se non c'è o c'è un cambio campo in mezzo)
 //  4 costante
 export const FEATURES = ['atterraggio', 'ultimo tocco', 'battuta', 'battuta successiva', 'costante'];
-export const PRIOR = [1.4, 0.35, -0.75, 2.6, 0]; // battuta: logit(0.32)
+export const PRIOR = [1.8, 0.35, -0.75, 2.0, 0]; // battuta: logit(0.32)
 const KEY = 'vsp-winmodel-v1';
 
-export function winFeatures(ra, next, gapBreak, landingWinner) {
+// lato che batte secondo il primo tocco di uno scambio, con affidabilità: una battuta parte da
+// dietro la linea di fondo; un primo tocco basso dentro il campo è la ricezione (la battuta non
+// è stata vista) e quindi batteva l'altra metà campo
+export function serveSideOf(ra) {
+  const t0 = ra?.touches?.[0];
+  if (!t0 || t0.noServe) return { side: null, w: 0 };
+  const y = t0.X?.[1], z = t0.X?.[2];
+  if (y != null && y > 1.5 && y < 16.5) {
+    if (z != null && z < 1.6) return { side: t0.side === 'near' ? 'far' : 'near', w: 0.5 };
+    return { side: t0.side, w: 0.3 };
+  }
+  return { side: t0.side, w: t0.reconstructed ? 0.6 : 1 };
+}
+
+// typicalGap: pausa tipica tra due scambi rilevati (mediana); una pausa molto più lunga fa
+// pensare a uno scambio non rilevato in mezzo, e la battuta dopo non dice chi ha vinto questo
+export function typicalGap(rallies) {
+  const g = [];
+  for (let k = 1; k < rallies.length; k++) { const d = rallies[k].start - rallies[k - 1].end; if (d > 0) g.push(d); }
+  g.sort((a, b) => a - b);
+  return g.length >= 3 ? g[g.length >> 1] : null;
+}
+
+export function winFeatures(ra, next, gapBreak, landingWinner, gap = null) {
   const sgn = (side) => (side === 'near' ? 1 : side === 'far' ? -1 : 0);
   const L = ra.landing;
   const land = landingWinner ? (landingWinner === 'near' ? 1 : -1) * (L && !L.extrapolated ? 1 : 0.6) : 0;
   const last = sgn(ra.touches[ra.touches.length - 1]?.side);
-  const srv = ra.touches[0]?.noServe ? 0 : sgn(ra.touches[0]?.side);
+  const me = serveSideOf(ra);
+  const srv = sgn(me.side) * me.w;
   let nx = 0;
-  if (next && !gapBreak && next.touches?.length) {
-    const t0 = next.touches[0];
-    nx = sgn(t0.side) * (t0.noServe ? 0 : t0.reconstructed ? 0.6 : 1);
+  if (next && !gapBreak) {
+    const n = serveSideOf(next);
+    nx = sgn(n.side) * n.w;
+    if (gap && next.start - ra.end > 2.2 * gap) nx *= 0.3;
   }
   return [land, last, srv, nx, 1];
 }

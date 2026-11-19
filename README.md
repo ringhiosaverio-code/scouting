@@ -137,6 +137,10 @@ quando l'atterraggio no), l'ultimo tocco e chi batte. I pesi iniziali vengono da
 scambi ufficiali (`data/dynamics.json`: in SuperLega chi batte vince il 32% degli scambi, chi
 attacca per ultimo il 75%); a ogni scambio confermato (dallo scout o dal punto a punto) il
 modello si aggiorna e impara quanto fidarsi di ciascun indizio con quella telecamera.
+Se l'atterraggio non si vede il punto viene dedotto (con avviso e percentuale); contro un
+atterraggio visto il modello prevale solo se è sicuro almeno al 90%. Sul banco sintetico, con
+metà degli atterraggi tolti, chi vince il punto passa dal 46% al 90% (`npm run bench`, opzione
+`{"dropLanding":0.5}`).
 
 Le incertezze vengono **segnalate** nella proposta: palla vicino alla linea, tocco o
 alzata non visti e quindi dedotti, atterraggio non visto, battitore incoerente con la
@@ -160,6 +164,7 @@ battute da entrambi i lati, attacchi, difese, errori, ace):
 |---|---|
 | scambi trovati | ~95% |
 | squadra che vince il punto | ~90% |
+| … con metà degli atterraggi non visti (palla fuori inquadratura) | 46% dal solo atterraggio → **90%** con il modello del punto (cambio palla) |
 | sequenza dei fondamentali esatta | ~78% |
 | istante dei tocchi | entro 0,1 s |
 | posizione 3D dei tocchi | tipicamente entro 0,5 m (meno precisa sul fondo campo lontano) |

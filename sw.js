@@ -1,11 +1,14 @@
 // Service worker: rende l'app utilizzabile offline (es. palazzetti senza rete).
-const CACHE = 'vsp-v5';
+const CACHE = 'vsp-v6';
 const FILES = [
-  './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg', 'samples/esempio.dvw',
-  'js/main.js', 'js/lib/constants.js', 'js/lib/court.js', 'js/lib/codes.js', 'js/lib/engine.js', 'js/lib/predict.js',
-  'js/lib/stats.js', 'js/lib/validate.js', 'js/lib/dvw.js', 'js/lib/store.js', 'js/lib/videosrc.js', 'js/lib/mega.js',
-  'js/ui/dom.js', 'js/ui/courtsvg.js', 'js/ui/scout.js', 'js/ui/setup.js', 'js/ui/report.js', 'js/ui/playlist.js', 'js/ui/settings.js', 'js/ui/auto.js', 'js/ui/ytplayer.js',
-  'js/vision/cv.js', 'js/vision/autocourt.js', 'js/vision/camera.js', 'js/vision/jersey.js', 'js/vision/digits.js', 'js/vision/tracker.js', 'js/vision/ballistic.js', 'js/vision/rally.js', 'js/vision/analyzer.js', 'js/vision/worker.js',
+  './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon.svg', 'samples/esempio.dvw', 'data/legavolley-2026-27.json', 'data/legavolley/index.json',
+  'js/lib/codes.js', 'js/lib/constants.js', 'js/lib/court.js', 'js/lib/dvw.js', 'js/lib/engine.js', 'js/lib/legavolley.js', 'js/lib/mega.js',
+  'js/lib/predict.js', 'js/lib/stats.js', 'js/lib/store.js', 'js/lib/validate.js', 'js/lib/videosrc.js', 'js/lib/winmodel.js', 'js/main.js',
+  'js/ui/auto.js', 'js/ui/courtsvg.js', 'js/ui/dom.js', 'js/ui/livefeed.js', 'js/ui/official.js', 'js/ui/players.js', 'js/ui/playlist.js',
+  'js/ui/report.js', 'js/ui/scout.js', 'js/ui/settings.js', 'js/ui/setup.js', 'js/ui/ytplayer.js', 'js/vision/analyzer.js', 'js/vision/autocourt.js',
+  'js/vision/ballistic.js', 'js/vision/ballnet.js', 'js/vision/breaks.js', 'js/vision/camera.js', 'js/vision/cv.js', 'js/vision/demux.js',
+  'js/vision/detector.js', 'js/vision/detworker.js', 'js/vision/digitnet.js', 'js/vision/digits.js', 'js/vision/fastworker.js',
+  'js/vision/framepipe.js', 'js/vision/jersey.js', 'js/vision/playerid.js', 'js/vision/rally.js', 'js/vision/tracker.js', 'js/vision/worker.js',
 ];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

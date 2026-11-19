@@ -1,0 +1,93 @@
+{
+ "fonte": "Punto a punto ufficiale Lega Pallavolo Serie A (legavolley.it)",
+ "aggiornato": "2026-11-19",
+ "leghe": {
+  "SuperLega": {
+   "partite": 20,
+   "scambi": 3233,
+   "vinceChiBatte": 0.3186,
+   "ace": 0.0687,
+   "erroreBattuta": 0.215,
+   "attacchiPerScambio": [
+    0.2908,
+    0.4875,
+    0.1389,
+    0.0501,
+    0.0195,
+    0.0071,
+    0.0034,
+    0.0028
+   ],
+   "attacchiMedi": 1.071,
+   "fine": {
+    "att_pt": 0.5193,
+    "serve_err": 0.215,
+    "block_pt": 0.0931,
+    "att_err": 0.0804,
+    "ace": 0.0687,
+    "att": 0.0161,
+    "altro": 0.0074
+   },
+   "primoAttaccoPunto": 0.524,
+   "vinceChiAttaccaPerUltimo": 0.751
+  },
+  "Serie A2": {
+   "partite": 17,
+   "scambi": 2986,
+   "vinceChiBatte": 0.3148,
+   "ace": 0.0556,
+   "erroreBattuta": 0.1701,
+   "attacchiPerScambio": [
+    0.2294,
+    0.5033,
+    0.1517,
+    0.0683,
+    0.0251,
+    0.0127,
+    0.006,
+    0.0033
+   ],
+   "attacchiMedi": 1.238,
+   "fine": {
+    "att_pt": 0.5774,
+    "serve_err": 0.1701,
+    "block_pt": 0.0991,
+    "att_err": 0.0827,
+    "ace": 0.0556,
+    "att": 0.0111,
+    "altro": 0.004
+   },
+   "primoAttaccoPunto": 0.5096,
+   "vinceChiAttaccaPerUltimo": 0.7614
+  },
+  "Serie A3": {
+   "partite": 15,
+   "scambi": 2509,
+   "vinceChiBatte": 0.3368,
+   "ace": 0.0442,
+   "erroreBattuta": 0.1507,
+   "attacchiPerScambio": [
+    0.2053,
+    0.5098,
+    0.1586,
+    0.0717,
+    0.0347,
+    0.012,
+    0.0024,
+    0.0056
+   ],
+   "attacchiMedi": 1.299,
+   "fine": {
+    "att_pt": 0.5847,
+    "serve_err": 0.1507,
+    "block_pt": 0.0992,
+    "att_err": 0.0957,
+    "ace": 0.0442,
+    "att": 0.0151,
+    "altro": 0.0104
+   },
+   "primoAttaccoPunto": 0.4799,
+   "vinceChiAttaccaPerUltimo": 0.7508
+  }
+ }
+}

@@ -346,3 +346,9 @@ textarea.mono { width: 100%; font-family: var(--mono); }
 .live-list { max-height: 260px; overflow: auto; margin: 0; padding-left: 26px; font-size: 12px; display: grid; gap: 3px; }
 .live-list code { font-size: 11px; }
 .live-list li.warn-row { opacity: 0.85; }
+
+/* dati ufficiali (Legavolley) */
+.official-box { border-left: 3px solid var(--accent, #1f6feb); padding: 6px 8px; margin: 6px 0; background: color-mix(in srgb, var(--accent, #1f6feb) 8%, transparent); border-radius: 4px; }
+.mini-table { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+.mini-table td { padding: 2px 8px 2px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.official-card h4 { margin: 8px 0 2px; font-size: 13px; }

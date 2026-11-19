@@ -277,3 +277,132 @@ test('rilevatore persone: decodifica YOLOX, tasselli e NMS', async () => {
   const t = toTensor(new Uint8ClampedArray([10, 20, 30, 255]), 1);
   assert.deepEqual(Array.from(t), [30, 20, 10]); // BGR
 });
+
+// ---------------------------------------------------------------- dati ufficiali Legavolley
+import { parsePbp, alignRallies, verify, packMatch, unpackMatch, lineupFromBox, nameScore } from '../js/lib/legavolley.js';
+
+// pagina "punto a punto" ridotta con la stessa struttura del sito (righe dalla più recente)
+function pbpHtml(rows) {
+  const li = (r, k) => `<li${r.start ? ' class="start"' : ''}${k === 'side' ? ' style="text-align:left;"' : ''}>${r[k] || ''}</li>`;
+  const cell = (s) => (s ? `<span class="number">${s[0]}</span><b class="no_mobile">${s[1]}</b><span class="skill"><b>${s[2]}</b></span>` : '');
+  const rev = [...rows].reverse();
+  const col = (cls, f) => `<div class="${cls}"><div class="price_table_inner"><ul>${rev.map((r) => `<li${r.start ? ' class="start"' : ''}>${f(r)}</li>`).join('')}</ul></div></div>`;
+  return `<section><div id="DIV_PbP">${col('price_table_left" style="x', (r) => cell(r.h))}${col('price_table points', (r) => `<span>${r.s[0]}</span>&thinsp;-&thinsp;<span>${r.s[1]}</span>`)}${col('price_table_right" style="x', (r) => cell(r.g))}</div></section>`;
+}
+
+test('punto a punto Legavolley: scambi, vincitori (anche falli senza azione) e set', () => {
+  const rows = [
+    { start: 1, h: [7, 'Rossi', 'BATTUTA'], s: [0, 0] }, { g: [11, 'Bianchi', 'ATTACCO'], s: [0, 0] }, { h: [4, 'Verdi', 'ATTACCO PUNTO'], s: [1, 0] },
+    { start: 1, h: [7, 'Rossi', 'ERRORE IN BATTUTA'], s: [1, 1] },
+    { start: 1, g: [11, 'Bianchi', 'ACE'], s: [1, 1] }, { h: [16, 'Neri', 'RICEZIONE ERRATA'], s: [1, 2] },
+    // fallo non registrato: il punteggio non cambia, lo aggiorna la riga dopo
+    { start: 1, g: [11, 'Bianchi', 'BATTUTA'], s: [1, 2] }, { h: [4, 'Verdi', 'ATTACCO'], s: [1, 2] },
+    { start: 1, h: [8, 'Gialli', 'BATTUTA'], s: [2, 2] }, { g: [9, 'Blu', 'ATTACCO MURATO'], s: [2, 2] }, { h: [6, 'Viola', 'MURO PUNTO'], s: [3, 2] },
+    // nuovo set
+    { start: 1, g: [15, 'Rosa', 'ERRORE IN BATTUTA'], s: [1, 0] },
+  ];
+  const r = parsePbp(pbpHtml(rows));
+  assert.equal(r.length, 6);
+  assert.deepEqual(r.map((x) => x.winner), [0, 1, 1, 0, 0, 0]);
+  assert.deepEqual(r.map((x) => x.serveTeam), [0, 0, 1, 1, 0, 1]);
+  assert.deepEqual(r.map((x) => x.set), [1, 1, 1, 1, 1, 2]);
+  assert.deepEqual(r[4].scoreAfter, [3, 2]);
+  assert.equal(r[0].end.kind, 'att_pt'); assert.equal(r[0].end.num, 4);
+  assert.equal(r[2].serve, 'ace'); assert.equal(r[4].end.kind, 'block_pt');
+  // forma compatta andata e ritorno
+  const m = { teams: [{ name: 'A' }, { name: 'B' }], sets: [], players: [[{ number: 7, name: 'Rossi', start: [1, null, null, null, null], points: 0, serve: { tot: 2, err: 1, ace: 0 }, reception: { tot: 0, err: 0, pos: 0, prf: 0 }, attack: { tot: 0, err: 0, blocked: 0, pts: 0 }, block: { pts: 0 } }], []] };
+  const u = unpackMatch(JSON.parse(JSON.stringify(packMatch(1, m, r))));
+  assert.deepEqual(u.rallies.map((x) => x.winner), [0, 1, 1, 0, 0, 0]);
+  assert.equal(u.rallies[4].end.kind, 'block_pt');
+  assert.equal(u.players[0][0].serve.err, 1);
+});
+
+test('allineamento con il punto a punto: scambi in più e mancanti', () => {
+  const pbp = [0, 0, 1, 1, 0, 1, 1, 0].map((w, k, a) => ({ serveTeam: k ? a[k - 1] : 0, winner: w }));
+  // rilevati: manca il 3° scambio, c'è un falso scambio (palleggi) dopo il 5°
+  const det = [0, 1, 3, 4, null, 5, 6, 7].map((k) => (k == null ? { serveTeam: 'a', winner: null } : { serveTeam: pbp[k].serveTeam ? 'a' : '*', winner: pbp[k].winner ? 'a' : '*' }));
+  const pairs = alignRallies(det, pbp, 0);
+  assert.deepEqual(pairs, [0, 1, 3, 4, null, 5, 6, 7]);
+  const v = verify(det, pbp, pairs, 0);
+  assert.equal(v.matched, 7); assert.equal(v.serve.ok, 7); assert.equal(v.winner.ok, 7);
+});
+
+test('formazione dal tabellino e nomi delle squadre', () => {
+  const P = [4, 6, 7, 8, 16, 18].map((n, i) => ({ number: n, start: [i + 1, ((i + 2) % 6) + 1] }));
+  assert.deepEqual(lineupFromBox(P, 1), [4, 6, 7, 8, 16, 18]);
+  assert.deepEqual(lineupFromBox(P, 2), [16, 18, 4, 6, 7, 8]);
+  assert.ok(nameScore('Sir Susa Scai Perugia', 'Perugia') > 0.9);
+  assert.equal(nameScore('Pallavolo Padova', 'Perugia'), 0);
+});
+
+import { applyOfficial, officialRally, verifyReport, rawReading } from '../js/ui/official.js';
+import { winFeatures, loadWinModel, pNear, updateWinModel } from '../js/lib/winmodel.js';
+
+test('correzione della proposta con il punto a punto ufficiale', () => {
+  const match = { teams: { '*': { name: 'Casa' }, a: { name: 'Ospiti' } }, official: { homeIs: 0 } };
+  const sk = (team, skill, num, ev, vt) => ({ kind: 'skill', team, skill, num, ev, vt, type: 'H' });
+  const base = [sk('*', 'S', 4, '+', 1), sk('a', 'R', 5, '+', 2), sk('a', 'E', 6, '+', 3), sk('a', 'A', 9, '+', 4), sk('*', 'D', 12, '+', 5), sk('*', 'E', 3, '+', 6), sk('*', 'A', 10, '#', 7), { kind: 'point', team: '*', vt: 8 }];
+  // attacco punto: battitore e attaccanti dal punto a punto
+  let r = { serveTeam: 0, server: 7, serve: 'serve', winner: 0, actions: [{ team: 1, num: 11, kind: 'att' }, { team: 0, num: 4, kind: 'att_pt' }], end: { team: 0, num: 4, kind: 'att_pt' } };
+  let o = applyOfficial(base, r, match);
+  assert.equal(o.notes.length, 0);
+  const S = o.events.find((e) => e.skill === 'S'), As = o.events.filter((e) => e.skill === 'A');
+  assert.equal(S.num, 7); assert.deepEqual(As.map((e) => e.num), [11, 4]); assert.equal(As[1].ev, '#');
+  assert.equal(o.events[o.events.length - 1].kind, 'point'); assert.equal(o.events[o.events.length - 1].team, '*');
+  // attacco murato: muro punto aggiunto se non visto, punto all'altra squadra
+  r = { serveTeam: 0, server: 7, serve: 'serve', winner: 1, actions: [{ team: 1, num: 11, kind: 'att' }, { team: 0, num: 4, kind: 'att_blocked' }, { team: 1, num: 14, kind: 'block_pt' }], end: { team: 1, num: 14, kind: 'block_pt' } };
+  o = applyOfficial(base, r, match);
+  const B = o.events.find((e) => e.skill === 'B');
+  assert.ok(B); assert.equal(B.team, 'a'); assert.equal(B.num, 14); assert.equal(B.ev, '#');
+  assert.equal(o.events.filter((e) => e.skill === 'A').pop().ev, '/');
+  assert.equal(o.events.find((e) => e.kind === 'point').team, 'a');
+  // ace: ricezione errata del giocatore ufficiale, tocchi successivi eliminati
+  r = { serveTeam: 0, server: 7, serve: 'ace', winner: 0, actions: [{ team: 1, num: 15, kind: 'rec_err' }], end: { team: 0, num: 7, kind: 'ace' } };
+  o = applyOfficial(base, r, match);
+  assert.deepEqual(o.events.map((e) => e.skill || e.kind), ['S', 'R', 'point']);
+  assert.equal(o.events[0].ev, '#'); assert.equal(o.events[1].num, 15); assert.equal(o.events[1].ev, '=');
+  // errore in battuta
+  o = applyOfficial(base, { serveTeam: 0, server: 7, serve: 'serve_err', winner: 1, actions: [] }, match);
+  assert.deepEqual(o.events.map((e) => e.skill || e.kind), ['S', 'point']); assert.equal(o.events[1].team, 'a');
+  // attacco decisivo non visto: aggiunto in coda
+  o = applyOfficial(base.slice(0, 4).concat({ kind: 'point', team: 'a', vt: 5 }), { serveTeam: 0, server: 7, serve: 'serve', winner: 0, actions: [{ team: 1, num: 11, kind: 'att' }, { team: 0, num: 10, kind: 'att_pt' }], end: { team: 0, num: 10, kind: 'att_pt' } }, match);
+  const last = o.events.filter((e) => e.kind === 'skill').pop();
+  assert.equal(last.skill, 'A'); assert.equal(last.team, '*'); assert.equal(last.num, 10); assert.equal(last.ev, '#');
+  // squadra al servizio diversa: nessuna correzione, avviso
+  o = applyOfficial(base, { serveTeam: 1, server: 9, serve: 'serve', winner: 1, actions: [] }, match);
+  assert.equal(o.applied, false); assert.equal(o.notes.length, 1);
+  // squadre invertite (casa dell'app = ospiti Legavolley)
+  o = applyOfficial(base, { serveTeam: 1, server: 7, serve: 'serve_err', winner: 0, actions: [] }, { ...match, official: { homeIs: 1 } });
+  assert.equal(o.events[0].num, 7); assert.equal(o.events[1].team, 'a');
+});
+
+test('scambio ufficiale dal punteggio e verifica delle letture del video', () => {
+  const pack = { id: 1, teams: [{ name: 'A' }, { name: 'B' }], sets: [], players: [[], []], rallies: [[1, 0, 7, 'S', 0, [[0, 4, 'AP']]], [1, 0, 7, 'SE', 1, []], [1, 1, 9, 'A', 1, [[0, 5, 'RE']]]] };
+  const match = { teams: { '*': { name: 'A' }, a: { name: 'B' } }, official: { homeIs: 0, data: pack } };
+  const q = officialRally(match, { set: 1, score: { '*': 1, a: 1 } });
+  assert.equal(q.k, 2); assert.equal(q.ok, true); assert.equal(q.r.serve, 'ace');
+  assert.equal(officialRally(match, { set: 1, score: { '*': 2, a: 0 } }).ok, false);
+  const raw = (ev) => rawReading(ev);
+  const rallies = [
+    { status: 'accepted', off: { set: 1, k: 0 }, raw: raw([{ kind: 'skill', team: '*', skill: 'S', num: 7, ev: '+' }, { kind: 'skill', team: '*', skill: 'A', num: 4, ev: '#' }, { kind: 'point', team: '*' }]) },
+    { status: 'accepted', off: { set: 1, k: 1 }, raw: raw([{ kind: 'skill', team: '*', skill: 'S', num: 8, ev: '+' }, { kind: 'point', team: '*' }]) },
+  ];
+  const v = verifyReport(match, rallies);
+  assert.equal(v.n, 2); assert.deepEqual(v.serve, [2, 2]); assert.deepEqual(v.server, [1, 2]); assert.deepEqual(v.winner, [1, 2]); assert.deepEqual(v.outcome, [1, 2]); assert.deepEqual(v.endPlayer, [1, 1]);
+});
+
+test('modello del punto: cambio palla e apprendimento dagli scambi confermati', () => {
+  const mem = new Map(); const st = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
+  const m = loadWinModel(st);
+  const ra = (srv, last, landing) => ({ touches: [{ side: srv }, { side: last }], landing });
+  // l'atterraggio non visto, ma lo scambio dopo batte il lato lontano: punto al lontano
+  const f = winFeatures(ra('near', 'far', null), { touches: [{ side: 'far' }] }, false, null);
+  assert.ok(pNear(m, f) < 0.2);
+  // con un cambio campo in mezzo la battuta successiva non conta
+  const g = winFeatures(ra('near', 'far', null), { touches: [{ side: 'far' }] }, true, null);
+  assert.ok(pNear(m, g) > 0.2 && pNear(m, g) < 0.8); // non decisivo
+  // telecamera in cui l'atterraggio "lato vicino" è spesso sbagliato: il modello impara a fidarsene meno
+  const w0 = m.w[0];
+  for (let k = 0; k < 40; k++) updateWinModel(m, winFeatures(ra('far', 'near', { X: [0, 0, 0] }), null, false, 'near'), false);
+  assert.ok(m.w[0] < w0);
+});

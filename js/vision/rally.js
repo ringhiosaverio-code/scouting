@@ -160,7 +160,13 @@ export function extractRallies3D(frames, P, opts = {}) {
         prev.path.push(...pathOf(ch, s0.t0, landing ? landing.t + 0.3 : prev.end));
         prev.obsEnd = segs[segs.length - 1].t1;
       }
-      continue; // altrimenti: palleggi, riscaldamento, palla raccolta
+      // gioco vero senza battuta riconosciuta (battuta fuori dall'inquadratura o ricostruita
+      // male, video che comincia a scambio iniziato): si tiene lo scambio se ha più voli lunghi
+      // e almeno due tocchi, segnalando la battuta mancante
+      const realPlay = segs.length >= 3 && segs[segs.length - 1].t1 - segs[0].t0 >= 2.5 && ev.filter((e) => e.kind === 'touch').length >= 2;
+      if (!realPlay || opts.requireServe) continue; // altrimenti: palleggi, riscaldamento, palla raccolta
+      const first = { t: s0.t0 - 0.02, X: p, vin: null, vout: v, kind: 'touch', side: sideOf(p), speedOut: Math.hypot(...v), conf: 0.3, virtual: true, missing: true, noServe: true };
+      ev.splice(0, 0, first);
     }
     const landing = findLanding(ev, segs);
     if (opts.W) for (const e of ev) { const q = project(P, [e.X[0], e.X[1], 0]); e.box = playerBoxFor(frames, q, opts.W, opts.H, e.t); e.foot = [+(q[0] / opts.W).toFixed(4), +(q[1] / opts.H).toFixed(4)]; }
@@ -364,7 +370,9 @@ export function interpretRally(rally, ctx) {
     if (inCourt(L)) winner = other(team(sideOf(L)));
     else winner = other(last.team);
     if (nearLine(L)) notes.push(`Palla vicino alla linea (${L[0].toFixed(1)}, ${L[1].toFixed(1)} m): verificare dentro/fuori`);
-  } else notes.push('Atterraggio non visto: assegnare il punto manualmente');
+  } else if (!ctx.forceWinner) notes.push('Atterraggio non visto: assegnare il punto manualmente');
+  // vincitore noto da fuori (dati ufficiali, cambio palla): le valutazioni si adeguano
+  if (ctx.forceWinner) winner = ctx.forceWinner;
 
   // 3) valutazioni
   for (let i = 0; i < seq.length; i++) {
@@ -448,6 +456,7 @@ export function interpretRally(rally, ctx) {
       e.num = ctx.rank ? ctx.rank(s.team, s.skill, zone) : null;
     }
     e.vt = +(s.tc.t + (ctx.vtOffset || 0)).toFixed(2);
+    e.tk = T.indexOf(s.tc); // tocco rilevato corrispondente (-1 = dedotto)
     e.auto = { conf: +(s.tc.conf ?? 0.5).toFixed(2), virtual: !!s.tc.virtual, speed: s.tc.speedOut ? Math.round(s.tc.speedOut * 3.6) : null, height: s.tc.X[2] != null ? +s.tc.X[2].toFixed(2) : null };
   }
   // asso: ricezione errata del giocatore più vicino all'atterraggio

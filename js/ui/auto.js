@@ -13,6 +13,8 @@ import { rankPlayers } from '../lib/predict.js';
 import { uid } from '../lib/engine.js';
 import { ATTACK_TABLE } from '../lib/constants.js';
 import { readJerseyAt } from '../vision/jersey.js';
+import { officialOf, officialRally, applyOfficial, rawReading, officialCard, describeOfficial } from './official.js';
+import { winFeatures, loadWinModel, saveWinModel, pNear, updateWinModel } from '../lib/winmodel.js';
 
 export function createAuto(app) {
   const root = h('div', { class: 'playlist-grid auto-grid' });
@@ -22,13 +24,14 @@ export function createAuto(app) {
   const setupCard = h('div', { class: 'card' });
   const liveCard = h('div', { class: 'card live-card hidden' });
   const listCard = h('div', { class: 'card auto-list' });
+  const offCard = h('div');
   const propCard = h('div', { class: 'card' });
   root.append(
     h('div', { class: 'left-col' }, videoBox, info, h('div', { class: 'pl-controls row gap' },
       h('button', { class: 'btn', onclick: () => select(selIndex - 1) }, '⏮ Scambio prec.'),
       h('button', { class: 'btn', onclick: () => playSel() }, '▶ Rivedi scambio'),
       h('button', { class: 'btn', onclick: () => select(selIndex + 1) }, 'Scambio succ. ⏭'))),
-    h('div', { class: 'right-col' }, setupCard, liveCard, propCard, listCard));
+    h('div', { class: 'right-col' }, setupCard, offCard, liveCard, propCard, listCard));
 
   const video = app.video;
   let running = null; // AbortController
@@ -38,6 +41,8 @@ export function createAuto(app) {
   let stopAt = null;
 
   const A = () => app.match.analysis;
+  const winModel = loadWinModel();
+  const teamOf = (t) => (t == null ? null : t === (app.match.official?.homeIs ?? 0) ? '*' : 'a');
   const rallies = () => A()?.rallies || [];
 
   // ---------- geometria / overlay ----------
@@ -210,8 +215,11 @@ export function createAuto(app) {
     const skills = prop.events.filter((e) => e.kind === 'skill');
     const results = [];
     if (!quiet) toast('Riconoscimento dei giocatori…');
-    for (let k = 0; k < ra.touches.length && k < skills.length; k++) {
-      const tc = ra.touches[k], e = skills[k];
+    for (let k = 0; k < skills.length; k++) {
+      const e = skills[k];
+      const tk = e.tk ?? k;
+      if (tk < 0 || !ra.touches[tk]) continue; // tocco dedotto, non visto nel video
+      const tc = ra.touches[tk];
       if (!tc.box && !tc.foot) { results.push({ k, msg: 'giocatore non individuato' }); continue; }
       // il numero letto deve essere di un giocatore in campo (o del libero) di quella squadra
       const cur = app.rp.current;
@@ -227,7 +235,12 @@ export function createAuto(app) {
         const prior = new Map(rankPlayers(app.match, cur, app.learner, e.team, e.skill, zone).map((r) => [r.num, r.p]));
         const ranking = identify(galleryOf(app.match, e.team), desc, [...valid], prior);
         const top = ranking[0];
-        (prop.pid ||= {})[k] = { desc, ranking, proposed: e.num };
+        (prop.pid ||= {})[k] = { desc, ranking, proposed: e.num, tk };
+        // numero dai dati ufficiali: non si cambia; la galleria imparerà da questo tocco
+        if (e.official) {
+          results.push({ k, msg: top?.num === e.num ? `#${e.num} ufficiale, riconosciuto anche dal video (${Math.round(top.p * 100)}%)` : `#${e.num} ufficiale${top ? ` (il video proponeva #${top.num}, ${Math.round(top.p * 100)}%)` : ''}: la galleria impara da questo tocco` });
+          continue;
+        }
         // battuta: il battitore dalla rotazione è quasi sempre giusto; lo si cambia solo con una
         // lettura sicurissima e confermata in più fotogrammi
         const strict = e.skill === 'S' && e.num != null;
@@ -299,16 +312,50 @@ export function createAuto(app) {
     const ra = rallies()[i];
     const cur = app.rp.current;
     if (!ra || !cur || cur.over) return null;
-    const out = interpretRally(ra, ctxNow());
-    // i primi eventi corrispondono, in ordine, ai tocchi rilevati
-    const skills = out.events.filter((e) => e.kind === 'skill');
-    const labels = ra.touches.map((_, k) => (skills[k] ? `${skills[k].skill}${skills[k].ev}` : ''));
-    const notes = [...out.notes];
+    const ctx = ctxNow();
+    // lettura del solo video (conservata per la verifica con i dati ufficiali)
+    const raw = interpretRally(ra, ctx);
+    const notes = [], info = [];
+    // chi vince: indizi del video + cambio palla (chi batte lo scambio dopo), modello che impara
+    const rs = rallies();
+    const next = rs[i + 1], br = breakAfter(ra);
+    const gapBreak = !!br && (br.kind === 'side' || br.kind === 'setbreak');
+    const landSide = raw.winner ? ((raw.winner === '*') === cur.homeNear ? 'near' : 'far') : null;
+    const feats = winFeatures(ra, next && next.status !== 'discarded' ? next : null, gapBreak, landSide);
+    const pn = pNear(winModel, feats);
+    const sideTeam = (near) => ((near === cur.homeNear) ? '*' : 'a');
+    let force = null;
+    // scambio ufficiale: quello del punteggio attuale; per uno scambio già accettato, quello abbinato allora
+    const offM = officialOf(app.match) && app.match.official.apply !== false ? officialOf(app.match) : null;
+    const offAt = (o) => { const r = offM.rallies.filter((x) => x.set === o.set)[o.k]; return r ? { r, k: o.k, ok: true, before: [] } : null; };
+    const off = !offM ? null : ra.status === 'accepted' ? (ra.off ? offAt(ra.off) : null) : officialRally(app.match, cur);
+    if (off) force = teamOf(off.r.winner);
+    else if (pn >= 0.8 || pn <= 0.2) {
+      const w = sideTeam(pn >= 0.5);
+      if (w !== raw.winner) {
+        force = w;
+        notes.push(raw.winner ? `Punto: il video indicava ${app.match.teams[raw.winner].name}, ma batte poi ${app.match.teams[w].name} (cambio palla, ${Math.round(Math.max(pn, 1 - pn) * 100)}%): verifica` : `Punto dedotto: batte poi ${app.match.teams[w].name} (cambio palla, ${Math.round(Math.max(pn, 1 - pn) * 100)}%)`);
+      }
+    }
+    const out = force ? interpretRally(ra, { ...ctx, forceWinner: force }) : raw;
+    notes.push(...out.notes.filter((n) => !(force && /^Atterraggio non visto/.test(n))));
     let events = out.events;
+    let official = null;
+    if (off) {
+      if (!off.ok) notes.push(`Il punteggio registrato (${cur.score['*']}-${cur.score.a}) non coincide con quello ufficiale a questo punto (${off.before.join('-')}): controlla gli scambi precedenti`);
+      const fixed = applyOfficial(events, off.r, app.match);
+      events = fixed.events;
+      notes.push(...fixed.notes);
+      if (fixed.applied && raw.winner && raw.winner !== force) info.push(`punto a ${app.match.teams[force].name} (il video indicava ${app.match.teams[raw.winner].name})`);
+      info.push(...fixed.info);
+      official = { set: ra.status === 'accepted' && ra.off ? ra.off.set : cur.set, k: off.k, text: describeOfficial(offM, app.match, off.r), applied: fixed.applied };
+    }
+    // ogni tocco rilevato con il suo fondamentale (per le etichette sul video)
+    const skills = events.filter((e) => e.kind === 'skill');
+    const labels = ra.touches.map((_, k) => { const e = skills.find((x) => x.tk === k); return e ? `${e.skill}${e.ev}` : ''; });
     if (ra.cutEnd) {
       notes.push('Scambio interrotto da un taglio o da un replay: l\'esito non si vede, verifica il punto');
     }
-    const br = breakAfter(ra);
     if (br?.kind === 'videocheck') notes.push(`Dopo questo scambio: ${br.why}. Probabile video check: verifica il punto (può essere stato ribaltato)`);
     const prevBr = breakBefore(ra);
     if (prevBr && (prevBr.kind === 'side' || prevBr.kind === 'setbreak') && prevBr.status === 'todo') notes.push(`Prima di questo scambio: ${BREAK_LABEL[prevBr.kind]} (${prevBr.why}). Registralo o ignoralo nell'elenco prima di accettare`);
@@ -318,7 +365,7 @@ export function createAuto(app) {
       const exp = cur.homeNear ? { near: tc['*'], far: tc.a } : { near: tc.a, far: tc['*'] };
       if (swappedVs(exp, ra.colours) === true) notes.push('Le maglie dicono che le squadre hanno cambiato campo rispetto a quanto registrato: usa ⇅ Campo nella scheda Scouting');
     }
-    return { rallyIdx: i, events, text: events.map(tokenOf).join(' '), notes, conf: out.conf, labels };
+    return { rallyIdx: i, events, text: events.map(tokenOf).join(' '), notes, info, official, raw: rawReading(raw.events), feats, pn, homeNear: cur.homeNear, conf: official?.applied ? Math.max(out.conf, 0.9) : out.conf, labels };
   }
   function parseProposal(text, base) {
     const toks = text.trim().split(/\s+/).filter(Boolean);
@@ -357,7 +404,8 @@ export function createAuto(app) {
       for (const [k, it] of Object.entries(proposal.pid)) {
         const e = fin[+k];
         if (!e || e.num == null || !it.desc) continue;
-        const ok = learn(galleryOf(app.match, e.team), it.ranking, Number(e.num), it.desc, { source: Number(e.num) !== it.proposed ? 'manual' : 'auto', t: ra.touches[+k]?.t });
+        const offNum = proposal.events.filter((x) => x.kind === 'skill')[+k]?.official;
+        const ok = learn(galleryOf(app.match, e.team), it.ranking, Number(e.num), it.desc, { source: offNum ? 'official' : Number(e.num) !== it.proposed ? 'manual' : 'auto', t: ra.touches[it.tk ?? +k]?.t });
         if (!ok) { skipped++; continue; }
         learned++; if (Number(e.num) !== it.proposed) corrected++;
       }
@@ -367,7 +415,12 @@ export function createAuto(app) {
     app.commit('Analisi automatica', (m) => {
       for (const e of evs) m.events.push({ ...e, id: uid() });
       const r = m.analysis.rallies.find((x) => x.id === ra.id);
-      if (r) r.status = 'accepted';
+      if (r) {
+        r.status = 'accepted';
+        // per la verifica: cosa aveva letto il video da solo, e quale scambio ufficiale è
+        r.raw = proposal.raw;
+        if (proposal.official) r.off = { set: proposal.official.set, k: proposal.official.k };
+      }
       // colori delle squadre, per accorgersi poi di un cambio campo non registrato
       const cur0 = app.rp.current;
       if (ra.colours && cur0) {
@@ -375,6 +428,9 @@ export function createAuto(app) {
         m.analysis.teamColours ||= byTeam;
       }
     });
+    // chi ha vinto davvero: il modello del punto impara
+    const pt = evs.find((e) => e.kind === 'point');
+    if (pt && proposal.feats && proposal.homeNear != null) { updateWinModel(winModel, proposal.feats, (pt.team === '*') === proposal.homeNear); saveWinModel(winModel); }
     if (!silent) { toast('Scambio aggiunto', 'ok'); next(); }
     return true;
   }
@@ -397,7 +453,7 @@ export function createAuto(app) {
       if (ra.status !== 'todo') continue;
       selIndex = i;
       proposal = buildProposal(i);
-      if (!proposal || proposal.notes.length || proposal.conf < minConf || !proposal.events.some((e) => e.kind === 'point')) { stopReason = proposal?.notes[0] || (proposal ? `affidabilità ${Math.round(proposal.conf * 100)}%` : 'set concluso'); break; }
+      if (!proposal || proposal.notes.length || (proposal.conf < minConf && !proposal.official?.applied) || !proposal.events.some((e) => e.kind === 'point')) { stopReason = proposal?.notes[0] || (proposal ? `affidabilità ${Math.round(proposal.conf * 100)}%` : 'set concluso'); break; }
       const pb = breakBefore(ra);
       if (pb && pb.status === 'todo' && pb.kind !== 'videocheck') { stopReason = `${BREAK_LABEL[pb.kind]} prima dello scambio`; break; }
       if (galleryReady()) await readNumbers({ quiet: true });
@@ -488,7 +544,10 @@ export function createAuto(app) {
       h('h3', {}, `Scambio ${selIndex + 1} · ${fmtTime(ra.start)} · ${statusTxt}`),
       h('p', { class: 'muted small' }, `Affidabilità ${Math.round(proposal.conf * 100)}% · ${ra.touches.length} tocchi · ${ra.landing ? `atterraggio ${ra.landing.extrapolated ? 'stimato' : 'visto'}` : 'atterraggio non visto'} · ${ra.mode.toUpperCase()}`),
       proposal.notes.length ? h('ul', { class: 'notes' }, proposal.notes.map((n) => h('li', { class: 'warn' }, '⚠ ' + n))) : null,
-      proposal.ocr ? h('ul', { class: 'notes ocr-results' }, proposal.ocr.map((r) => h('li', {}, `Tocco ${r.k + 1}: ${r.msg}`))) : null,
+      proposal.official ? h('div', { class: 'official-box small' }, h('b', {}, '📋 Ufficiale: '), proposal.official.text,
+        proposal.info.length ? h('div', { class: 'muted' }, 'Corretto con il punto a punto: ' + proposal.info.join(' · ')) : null) : null,
+      !proposal.official && proposal.pn != null ? h('p', { class: 'muted small' }, `Punto: ${Math.round(Math.max(proposal.pn, 1 - proposal.pn) * 100)}% ${app.match.teams[(proposal.pn >= 0.5) === proposal.homeNear ? '*' : 'a'].name} secondo il modello (impara da ogni scambio confermato: ${winModel.n ? `${Math.round((100 * winModel.ok) / winModel.n)}% giusti su ${winModel.n}` : 'ancora nessuno'})`) : null,
+      proposal.ocr ? h('ul', { class: 'notes ocr-results' }, proposal.ocr.map((r) => { const e = proposal.events.filter((x) => x.kind === 'skill')[r.k]; return h('li', {}, `${r.k + 1}. ${e ? e.skill : ''}: ${r.msg}`); })) : null,
       ta, descr,
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn primary', disabled: ra.status === 'accepted', onclick: () => accept() }, '✓ Accetta (Invio)'),
@@ -510,14 +569,24 @@ export function createAuto(app) {
         h('span', { class: 'mono' }, fmtTime(r.start)), ' ',
         r.touches.map((tc) => (tc.side === 'near' ? '●' : '○')).join(''),
         r.landing ? ' ✕' : ' ?', r.cutEnd ? ' ✂' : '', ' ',
+        r.off && r.raw ? h('span', { class: 'small', title: 'Lettura del video confrontata con il punto a punto ufficiale' }, offMark(r)) : null, ' ',
         h('span', { class: 'muted' }, { todo: '', accepted: '✓', discarded: 'scartato' }[r.status])),
       ...(breakAfter(r) ? [breakRow(breakAfter(r))] : [])])));
   }
 
+  // ✓ il video aveva letto giusto chi batte e chi vince; ✗ no (confronto con il punto a punto)
+  function offMark(r) {
+    const off = officialOf(app.match);
+    const o = off?.rallies.filter((x) => x.set === r.off.set)[r.off.k];
+    if (!o) return '';
+    const okS = r.raw.serveTeam === teamOf(o.serveTeam), okW = r.raw.winner === teamOf(o.winner);
+    return okS && okW ? '📋✓' : `📋✗${okS ? '' : ' battuta'}${okW ? '' : ' punto'}`;
+  }
   function render() {
     if (!video.currentSrc && !videoBox.querySelector('.video-empty')) videoBox.append(h('div', { class: 'video-empty' }, h('p', {}, 'Carica il video della partita.'), h('div', { class: 'row gap wrap' }, h('button', { class: 'btn primary', onclick: () => app.openVideo() }, '📂 File dal PC'), h('button', { class: 'btn', onclick: () => app.openVideoLink() }, '🔗 Link video'))));
     if (video.currentSrc) videoBox.querySelector('.video-empty')?.remove();
     renderSetup();
+    clear(offCard); offCard.append(officialCard(app, () => { proposal = null; render(); }));
     renderProposal();
     renderList();
     drawOverlay();

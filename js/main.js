@@ -12,6 +12,7 @@ import { createReport } from './ui/report.js';
 import { createPlaylist } from './ui/playlist.js';
 import { createSettings } from './ui/settings.js';
 import { createAuto } from './ui/auto.js';
+import { officialLineup } from './ui/official.js';
 import { SKILLS, DEFAULT_SETTINGS } from './lib/constants.js';
 import { classifyVideoUrl } from './lib/videosrc.js';
 import { resolveMega, megaStreamUrl } from './lib/mega.js';
@@ -140,6 +141,15 @@ app.openLineup = (editIndex = null) => {
     serve: firstLineup ? (setNo % 2 === 1 ? firstLineup.serve : (firstLineup.serve === '*' ? 'a' : '*')) : '*',
     homeNear: prevLineup ? !prevLineup.homeNear : true,
   };
+  // dati ufficiali caricati: formazioni di partenza dal tabellino (solo giocatori in rosa)
+  const offLu = !editing ? officialLineup(m, setNo) : null;
+  let fromOfficial = false;
+  if (offLu) {
+    const inRoster = (t, arr) => arr && arr.every((n) => m.teams[t].players.some((p) => Number(p.number) === n));
+    if (inRoster('*', offLu.h)) { draft.h = [...offLu.h]; draft.hSetter = defaultSetter(m, '*', draft.h); fromOfficial = true; }
+    if (inRoster('a', offLu.v)) { draft.v = [...offLu.v]; draft.vSetter = defaultSetter(m, 'a', draft.v); fromOfficial = true; }
+    if (offLu.serve) draft.serve = offLu.serve;
+  }
   const body = h('div');
   const draw = () => {
     clear(body);
@@ -172,6 +182,7 @@ app.openLineup = (editIndex = null) => {
         h('label', { class: 'field' }, h('span', {}, m.settings.cameraView === 'side' ? 'Squadra a sinistra nel video' : 'Lato vicino alla telecamera'), h('select', { onchange: (e) => { draft.homeNear = e.target.value === '1'; } },
           h('option', { value: '1', selected: draft.homeNear }, m.teams['*'].name),
           h('option', { value: '0', selected: !draft.homeNear }, m.teams.a.name)))),
+      fromOfficial ? h('p', { class: 'ok small' }, '📋 Formazioni e servizio dal tabellino ufficiale Legavolley: controlla il lato del campo.') : null,
       isTiebreak && !editing ? h('p', { class: 'muted' }, 'Set decisivo: ricorda il sorteggio per il servizio e il cambio campo a 8 punti (alla richiesta, o con il pulsante ⇅ Campo).') : null);
   };
   draw();

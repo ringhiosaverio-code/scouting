@@ -83,7 +83,10 @@ e li accetta (anche in serie) o li corregge. Funziona così:
    dell'alzata dal punto ideale; esito dell'attacco dall'atterraggio o dalla difesa),
    zone, tipo di battuta e combinazione d'attacco (dal tempo alzata→attacco), squadra
    che vince il punto. I giocatori vengono dalla rotazione (battitore, palleggiatore)
-   e dal predittore per zona.
+   e dal predittore per zona. **Tempi di gioco**: una palla che passa la rete vola al
+   massimo ~1,7 s (battuta) o ~1,1 s (attacco); se il primo tocco visto di là arriva
+   molto dopo, i tocchi non visti in mezzo (ricezione o difesa, alzata, attacco) vengono
+   dedotti e segnalati per la verifica.
 5. **Chi tocca la palla**: attorno a ogni tocco una **rete neurale di rilevamento delle
    persone** (YOLOX, `models/`) trova i giocatori nel fotogramma a piena risoluzione;
    quello che tocca è il più vicino al punto del contatto, e viene seguito qualche
@@ -165,7 +168,7 @@ battute da entrambi i lati, attacchi, difese, errori, ace):
 | scambi trovati | ~95% |
 | squadra che vince il punto | ~90% |
 | … con metà degli atterraggi non visti (palla fuori inquadratura) | 46% dal solo atterraggio → **90%** con il modello del punto (cambio palla) |
-| sequenza dei fondamentali esatta | ~78% |
+| sequenza dei fondamentali esatta | ~90% (era 78%: ricezione/difesa e alzata non viste ora dedotte dai tempi di gioco) |
 | istante dei tocchi | entro 0,1 s |
 | posizione 3D dei tocchi | tipicamente entro 0,5 m (meno precisa sul fondo campo lontano) |
 | numeri di maglia (caratteri reali, cifre da 9 a 28 px, con sfocatura) | 48/48 nel test di lettura |

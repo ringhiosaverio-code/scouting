@@ -313,11 +313,26 @@ export function interpretRally(rally, ctx) {
     let skill;
     // dopo un buco nella traccia, primo tocco alto e vicino a rete = alzata: prima c'è stato
     // un tocco non visto (ricezione o difesa) che si deduce
-    if (i > 0 && tm !== possTeam && tc.missing && tc.X[2] != null && tc.X[2] > 2.0 && Math.abs(tc.X[1] - NET_Y) < 3.5) {
-      const lost = prev && prev.skill === 'S' ? 'R' : 'D';
-      const back = tc.side === 'near' ? [4.5, 3] : [4.5, 15];
-      seq.push({ tc: { t: tc.t - 1.0, X: [back[0], back[1], 0.8], side: tc.side, conf: 0.25, virtual: true }, team: tm, skill: lost, inferred: true });
-      possTeam = tm; k = 1;
+    // tempi di gioco: una palla che passa la rete vola al massimo ~1,7 s (battuta) o ~1,1 s
+    // (attacco, free ball); se il primo tocco visto di là arriva molto dopo, ed è alto vicino a
+    // rete, prima ci sono stati tocchi non visti: ricezione/difesa (e l'alzata, se il tempo basta
+    // per entrambe: questo tocco è allora l'attacco)
+    if (i > 0 && prev && tm !== possTeam && tc.X[2] != null && tc.X[2] > 2.0 && Math.abs(tc.X[1] - NET_Y) < 3.5) {
+      const flight = prev.skill === 'S' ? 1.7 : 1.1;
+      const extra = tc.t - prev.tc.t - flight;
+      if (tc.missing || extra > 0.4) {
+        const lost = prev.skill === 'S' ? 'R' : 'D';
+        const back = tc.side === 'near' ? [4.5, 3] : [4.5, 15];
+        const both = extra > 1.2 && tc.X[2] > 2.3;
+        const tLost = both ? prev.tc.t + Math.min(flight * 0.75, (tc.t - prev.tc.t) * 0.36) : tc.t - Math.min(1.0, (tc.t - prev.tc.t) * 0.45);
+        seq.push({ tc: { t: tLost, X: [back[0], back[1], 0.8], side: tc.side, conf: 0.25, virtual: true }, team: tm, skill: lost, inferred: true, why: lost === 'R' ? 'Ricezione' : 'Difesa' });
+        possTeam = tm; k = 1;
+        if (both) {
+          const sp = setterSpot(tc.side);
+          seq.push({ tc: { t: tc.t - (tc.t - tLost) * 0.48, X: [sp[0], sp[1], 2.6], side: tc.side, conf: 0.25, virtual: true }, team: tm, skill: 'E', inferred: true, why: 'Alzata' });
+          k = 2;
+        }
+      }
     }
     if (i === 0) skill = 'S';
     else if (tm !== possTeam) {
@@ -359,7 +374,24 @@ export function interpretRally(rally, ctx) {
       } else s.secondBall = true;
     }
     else if (s.skill === 'A') { /* ok */ }
-    else if (s.skill === 'R' || s.skill === 'D') s.overpass = true;
+    else if (s.skill === 'R' || s.skill === 'D') {
+      // dinamica di gioco: una palla rigiocata direttamente di là (ricezione o difesa "sbagliata")
+      // vola in circa 1 s; se il tocco dopo (o l'atterraggio dall'altra parte) arriva molto più
+      // tardi, in mezzo ci sono state alzata e attacco che il video non ha visto: si deducono
+      const tNext = n ? n.tc.t : rally.landing?.t;
+      const gap = tNext != null ? tNext - s.tc.t : 0;
+      if (gap >= (ctx.minAttackGap ?? 1.9)) {
+        const sp = setterSpot(s.tc.side), side = s.tc.side;
+        const tE = s.tc.t + gap * 0.5, tA = s.tc.t + gap * 0.82;
+        const ax = side === 'near' ? 1.2 : 7.8, ay = side === 'near' ? 8.0 : 10.0; // zona 4 vicino a rete
+        seq.splice(i + 1, 0,
+          { tc: { t: tE, X: [sp[0], sp[1], 2.6], side, conf: 0.25, virtual: true }, team: s.team, skill: 'E', inferred: true, why: 'Alzata' },
+          { tc: { t: tA, X: [ax, ay, 3.0], side, conf: 0.25, virtual: true }, team: s.team, skill: 'A', inferred: true, why: 'Attacco' });
+        i += 2;
+        continue;
+      }
+      s.overpass = true;
+    }
     if (s.skill === 'A' && s.tc.speedOut != null && s.tc.speedOut < 8 && (s.tc.X[2] ?? 3) < 2.4) s.skill = 'F';
   }
   // 2) vincitore dal punto di atterraggio
@@ -381,6 +413,7 @@ export function interpretRally(rally, ctx) {
       if (s.overpass) s.ev = '/';
       else if (!n) s.ev = winner && winner !== s.team ? '=' : '-';
       else if (n.team !== s.team) s.ev = '/';
+      else if (n.inferred || s.inferred) s.ev = '+'; // tocco dedotto: qualità non nota
       else {
         // zone di valutazione: dove il palleggiatore gioca la palla (e a che altezza)
         s.ev = receptionEvalAt(n.tc.X[0], n.tc.X[1], s.tc.side === 'near', n.tc.X[2]);
@@ -468,7 +501,7 @@ export function interpretRally(rally, ctx) {
   }
   if (winner) events.push({ kind: 'point', team: winner, vt: +((rally.landing?.t ?? rally.end) + (ctx.vtOffset || 0)).toFixed(2) });
   if (T[0]?.reconstructed) notes.push(`Battuta non vista, ricostruita all'indietro dalla traiettoria (${T[0].t.toFixed(1)} s): verificare`);
-  for (const s of seq) if (s.inferred) notes.push(`Alzata non vista, dedotta (${s.tc.t.toFixed(1)} s): verificare`);
+  for (const s of seq) if (s.inferred) { const o = s.why === 'Attacco' ? 'o' : 'a'; notes.push(`${s.why || 'Alzata'} non vist${o}, dedott${o} dai tempi di gioco (${s.tc.t.toFixed(1)} s): verificare`); }
   for (const s of seq) if (s.tc.missing) notes.push(`Possibile tocco non visto prima di ${s.e.skill} (${s.tc.t.toFixed(1)} s)`);
   const conf = seq.reduce((a, s) => a * Math.max(0.3, s.tc.conf ?? 0.5), 1) ** (1 / seq.length);
   return { events, notes, conf: +conf.toFixed(2), winner, serveTeam };

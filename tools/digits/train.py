@@ -110,10 +110,12 @@ if __name__ == '__main__':
     ddir, odir = sys.argv[1], sys.argv[2]
     real = np.load(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] != '-' else None
     epochs = int(sys.argv[4]) if len(sys.argv) > 4 else 6
-    files = sorted(glob.glob(ddir + '/part*.npz'))
+    files = sorted(glob.glob(ddir + '/part*.npz') + glob.glob(ddir + '/kit*.npz'))
     data = [np.load(f) for f in files]
     X = np.concatenate([d['X'] for d in data]); T = np.concatenate([d['T'] for d in data]).astype(np.int32); U = np.concatenate([d['U'] for d in data]).astype(np.int32)
     nval = 4000
+    perm0 = np.random.default_rng(0).permutation(len(X))
+    X, T, U = X[perm0], T[perm0], U[perm0]
     Xv, Tv, Uv = X[:nval], T[:nval], U[:nval]; X, T, U = X[nval:], T[nval:], U[nval:]
     truth_v = np.where(Uv == 10, -1, np.where(Tv == 0, Uv, (Tv - 1) * 10 + Uv))
     print('campioni', len(X), 'validazione sintetica', nval)
@@ -121,11 +123,17 @@ if __name__ == '__main__':
     p = init(key)
     bs = 256
     steps = epochs * (len(X) // bs)
-    sched = optax.warmup_cosine_decay_schedule(0, 2e-3, min(500, steps // 5), steps, 2e-5)
+    import os, pickle
+    init_ck = os.environ.get('INIT')  # rifinitura: si parte dai pesi di un addestramento precedente
+    peak = 7e-4 if init_ck else 2e-3
+    sched = optax.warmup_cosine_decay_schedule(0, peak, min(500, steps // 5), steps, 2e-5)
     opt = optax.chain(optax.clip_by_global_norm(2.0), optax.adamw(sched, weight_decay=1e-4))
+    if init_ck:
+        d0 = pickle.load(open(init_ck, 'rb')); p = d0['p']
+        print('pesi iniziali da', init_ck, flush=True)
     st = opt.init(p)
     fwd = jax.jit(lambda p, x: forward(p, x))
-    stats = init_stats()
+    stats = init_stats() if not init_ck else d0['stats']
     @jax.jit
     def step(p, st, stats, x, t, u, key):
         (l, ns), g = jax.value_and_grad(loss_fn, has_aux=True)(p, x, t, u, key)
@@ -137,19 +145,24 @@ if __name__ == '__main__':
     # ripresa da un salvataggio (l'addestramento può essere interrotto)
     import pickle, os
     ck = odir + '/checkpoint.pkl'
-    ep0 = 0
+    ep0, b0 = 0, 0
     if os.path.exists(ck):
-        d = pickle.load(open(ck, 'rb')); p, st, stats, ep0 = d['p'], d['st'], d['stats'], d['ep'] + 1
-        print('ripresa dall\'epoca', ep0 + 1, flush=True)
+        d = pickle.load(open(ck, 'rb')); p, st, stats = d['p'], d['st'], d['stats']
+        ep0, b0 = (d['ep'], d['b']) if d.get('b') else (d['ep'] + 1, 0)
+        print('ripresa dall\'epoca', ep0 + 1, 'passo', b0, flush=True)
     for ep in range(ep0, epochs):
+        # ordine dei campioni deterministico per epoca (serve a riprendere a metà)
+        rng = np.random.default_rng(1000 + ep)
         perm = rng.permutation(len(X)); tot = 0
-        for b in range(len(X) // bs):
+        for b in range(b0 if ep == ep0 else 0, len(X) // bs):
+            if b and b % 300 == 0:  # salvataggio intermedio
+                pickle.dump({'p': p, 'st': st, 'stats': stats, 'ep': ep, 'b': b}, open(ck + '.tmp', 'wb')); os.replace(ck + '.tmp', ck)
             idx = perm[b * bs:(b + 1) * bs]
             xb = norm_input(augment(rng, X[idx]))
             key, k = jax.random.split(key)
             p, st, stats, l = step(p, st, stats, jnp.asarray(xb), jnp.asarray(T[idx]), jnp.asarray(U[idx]), k)
             tot += float(l); it += 1
-            if b % 150 == 0: print(f'epoca {ep + 1} passo {b} perdita {tot / (b + 1):.3f} ({time.time() - t0:.0f} s)', flush=True)
+            if b % 150 == 0: print(f'epoca {ep + 1} passo {b} perdita {tot / (b - (b0 if ep == ep0 else 0) + 1):.3f} ({time.time() - t0:.0f} s)', flush=True)
         pf = fold(p, stats)
         num, conf = evaluate(pf, Xv, truth_v, fwd)
         print(f'== epoca {ep + 1}: perdita {tot / (len(X) // bs):.3f}')
@@ -163,5 +176,5 @@ if __name__ == '__main__':
         meta = {'in': [IN_H, IN_W], 'arch': [list(l) for l in ARCH], 'tensors': [[k, list(np.asarray(pf[k]).shape)] for k in names]}
         flat.astype(np.float16).tofile(odir + '/digitnet.f16')
         json.dump(meta, open(odir + '/digitnet.json', 'w'))
-        pickle.dump({'p': p, 'st': st, 'stats': stats, 'ep': ep}, open(ck, 'wb'))
+        pickle.dump({'p': p, 'st': st, 'stats': stats, 'ep': ep, 'b': 0}, open(ck + '.tmp', 'wb')); os.replace(ck + '.tmp', ck)
         print('  pesi salvati', flat.size, 'parametri', flush=True)

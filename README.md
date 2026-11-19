@@ -96,6 +96,16 @@ e li accetta (anche in serie) o li corregge. Funziona così:
    sostituisce la proposta solo se è stato davvero letto. Ogni correzione dello scout
    insegna qualcosa (galleria e peso degli indizi).
 
+**Cronaca in diretta**: mentre l'analisi procede, ogni scambio appena concluso compare
+subito nella scheda con fondamentali, giocatori ed esiti, il punteggio provvisorio e un
+mini report per squadra (battute, ace ed errori, ricezione positiva, attacchi, muri).
+
+**Rose ufficiali**: nella scheda Partita, **🏐 Da Legavolley** importa la rosa di una
+squadra di SuperLega, Serie A2 o Serie A3 (numeri, nomi, ruoli, dal sito legavolley.it,
+`data/legavolley-2026-27.json`): il riconoscimento cerca poi solo tra i numeri veri, e i
+ruoli guidano la rotazione. Il riconoscitore dei numeri è addestrato anche sulle maglie
+vere di queste squadre (foto ufficiali dei giocatori, usate solo per l'addestramento).
+
 Le incertezze vengono **segnalate** nella proposta: palla vicino alla linea, tocco o
 alzata non visti e quindi dedotti, atterraggio non visto, battitore incoerente con la
 rotazione. "Accetta in serie" si ferma al primo scambio con una segnalazione.

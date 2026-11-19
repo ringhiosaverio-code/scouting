@@ -191,7 +191,14 @@ export function createAuto(app) {
   // ---------- lettura dei numeri di maglia (OCR, sperimentale) ----------
   let ocrVideo = null;
   const galleryReady = () => app.videoInfo?.pixels && app.match.settings.autoIdentify !== false;
-  async function readNumbers({ quiet = false } = {}) {
+  let readChain = Promise.resolve();
+  function readNumbers(opts = {}) {
+    // una lettura alla volta (il video di lettura è condiviso): si accodano
+    const run = readChain.then(() => readNumbersNow(opts)).catch((e) => console.warn(e));
+    readChain = run;
+    return run;
+  }
+  async function readNumbersNow({ quiet = false } = {}) {
     const ra = rallies()[selIndex];
     const prop = proposal;
     if (!ra || !prop || !video.currentSrc) return;

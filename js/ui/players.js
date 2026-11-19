@@ -311,6 +311,18 @@ export function startPlayerRegistration(app, { onDone } = {}) {
   return { finish, ready };
 }
 
+// spostamento nel video robusto: con un tempo massimo (alcuni browser non emettono 'seeked'
+// se la posizione non cambia o se una ricerca precedente è ancora in corso)
+export function seekVideo(video, t) {
+  if (Math.abs(video.currentTime - t) < 0.01 && !video.seeking) return Promise.resolve();
+  return new Promise((res) => {
+    const done = () => { clearTimeout(tm); video.removeEventListener('seeked', done); res(); };
+    const tm = setTimeout(done, 3000);
+    video.addEventListener('seeked', done);
+    video.currentTime = t;
+  });
+}
+
 // ---- nei tocchi dell'analisi automatica ----
 // legge i descrittori del giocatore poco prima del contatto (più istanti, tiene il migliore)
 // Descrittore del giocatore che tocca: lo si individua al tocco (il più vicino al punto del
@@ -319,7 +331,7 @@ export function startPlayerRegistration(app, { onDone } = {}) {
 export async function describeTouch(video, t, boxNorm, footNorm = null, cal = null, candidates = null, { maxFrames = 7 } = {}) {
   let best = null, anchor = null, firstBox = null;
   const reads = [];
-  const seek = async (tt) => { if (Math.abs(video.currentTime - tt) > 0.01) { video.currentTime = tt; await new Promise((r) => video.addEventListener('seeked', r, { once: true })); } };
+  const seek = (tt) => seekVideo(video, tt);
   const offsets = [-0.15, 0.05, -0.4, -0.7, 0.35, -1.0, 0.65].slice(0, maxFrames);
   for (const dt of offsets) {
     // numero già letto con sicurezza: inutile continuare

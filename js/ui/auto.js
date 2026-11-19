@@ -228,7 +228,10 @@ export function createAuto(app) {
         const ranking = identify(galleryOf(app.match, e.team), desc, [...valid], prior);
         const top = ranking[0];
         (prop.pid ||= {})[k] = { desc, ranking, proposed: e.num };
-        const seen = (top.dig ?? 0) >= 0.5 || (top.tpl ?? 0) >= 0.75;
+        // battuta: il battitore dalla rotazione è quasi sempre giusto; lo si cambia solo con una
+        // lettura sicurissima e confermata in più fotogrammi
+        const strict = e.skill === 'S' && e.num != null;
+        const seen = strict ? (top.dig ?? 0) >= 0.9 && (desc.nReads || 0) >= 2 : (top.dig ?? 0) >= 0.5 || (top.tpl ?? 0) >= 0.75;
         // si cambia la proposta solo se il numero è stato davvero visto (rete delle cifre o
         // sagoma registrata); con la sola rotazione resta quella di partenza
         if (top && top.p >= 0.5 && (top.num === e.num || seen)) {

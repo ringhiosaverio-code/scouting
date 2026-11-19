@@ -89,9 +89,13 @@ e li accetta (anche in serie) o li corregge. Funziona così:
    quello che tocca è il più vicino al punto del contatto, e viene seguito qualche
    istante prima e dopo.
 6. **Numero di maglia**: una seconda rete, addestrata su maglie sintetiche (decine di
-   caratteri sportivi, colori, sponsor, pieghe, sfocatura e compressione video,
+   caratteri sportivi, colori, sponsor, pieghe, sfocatura e compressione video) e sui
+   numeri veri delle divise di SuperLega, A2 e A3 (foto ufficiali della Lega,
    `tools/digits`), legge il numero sul busto in ogni fotogramma; le letture si
-   sommano (basta che il numero si veda in un istante). Il risultato si combina con
+   sommano (basta che il numero si veda in un istante). Sui ritagli reali del video di
+   Fano, cercando tra i numeri delle rose, legge circa metà dei numeri leggibili da un
+   solo fotogramma con il 6% di errori (l'OCR generico usato prima: 1 su 103). Per la
+   battuta il battitore della rotazione si cambia solo con una lettura sicurissima. Il risultato si combina con
    la galleria della squadra (👕 Giocatori) e con rotazione e fondamentale; il numero
    sostituisce la proposta solo se è stato davvero letto. Ogni correzione dello scout
    insegna qualcosa (galleria e peso degli indizi).

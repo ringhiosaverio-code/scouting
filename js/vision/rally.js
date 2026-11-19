@@ -102,7 +102,7 @@ export function extractRallies3D(frames, P, opts = {}) {
     if (opts.seg3d !== false && segs.length) {
       const clean = ch.pts.filter((q, i) => segs.some((g) => i >= g.i && i < g.j));
       const r = segmentFlights3D(P, clean, opts);
-      if (r && r.segs.length && r.rms < (opts.seg3dMaxRms ?? 2.2)) events = reconcile3D(events, r);
+      if (r && r.segs.length && r.rms < (opts.seg3dMaxRms ?? 2.2)) events = reconcile3D(events, r, segs);
     }
     if (!segs.length) continue;
     const ev = events.map((e) => ({ ...e, side: sideOf(e.X) }));
@@ -177,28 +177,50 @@ export function extractRallies3D(frames, P, opts = {}) {
 //  - un tocco 3D senza corrispondente, ben sostenuto (voli adiacenti lunghi, cambio netto di
 //    direzione), era stato perso → aggiunto con la posizione 3D
 //  - i tocchi confermati restano come sono (la stima libera è più precisa quando c'è)
-export function reconcile3D(events, r) {
+export function reconcile3D(events, r, segs = null) {
+  // senza tocchi già visti (solo battuta o lancio) non si cambia nulla
+  if (!events.some((e) => e.kind === 'touch')) return events;
   const ev3 = r.events, segs3 = r.segs;
-  const near = (t, list) => list.find((e) => Math.abs(e.t - t) <= 0.4);
+  // i tocchi aggiunti devono stare dentro i voli già visti (non all'inizio: la battuta e il
+  // lancio sono gestiti a parte)
+  const tMin = segs?.length ? segs[0].t0 + 0.3 : -Infinity, tMax = segs?.length ? segs[segs.length - 1].t1 - 0.1 : Infinity;
+  const strong = (k) => segs3[k] && segs3[k + 1] && segs3[k].j - segs3[k].i >= 10 && segs3[k + 1].j - segs3[k + 1].i >= 10;
+  // posizione impossibile per un tocco (troppo alto, fuori dal palazzetto)
+  const implausible = (X) => X[2] > 3.9 || X[0] < -2.5 || X[0] > 11.5 || X[1] < -8 || X[1] > 26;
+  // per ogni tocco 3D, il tocco libero più vicino nel tempo (entro 0,4 s)
+  const owner = new Map();
+  ev3.forEach((m, k) => {
+    let best = null;
+    for (const e of events) if (Math.abs(e.t - m.t) <= 0.4 && (!best || Math.abs(e.t - m.t) < Math.abs(best.t - m.t))) best = e;
+    if (best) owner.set(best, k);
+  });
   const kept = [];
   for (const e of events) {
-    const m = near(e.t, ev3);
-    if (e.kind !== 'bounce' && !m) continue;
-    // stesso tocco ma dall'altra parte della rete secondo la ricostruzione 3D (coerente con
-    // tutti i voli): la profondità del volo libero era sbagliata → posizione 3D
-    if (m && e.kind === 'touch' && m.kind === 'touch' && sideOf(m.X) !== sideOf(e.X)) kept.push({ ...e, X: m.X, vin: m.vin, vout: m.vout, speedOut: m.speedOut, depth3d: true });
+    const k = owner.get(e);
+    if (k == null) {
+      // senza corrispondente 3D: tolto se cade dentro un volo 3D ben sostenuto (era un volo
+      // spezzato a metà), oppure se è un doppione di un tocco già associato
+      const inside = segs3.find((g) => e.t > g.t0 + 0.1 && e.t < g.t1 - 0.1 && g.j - g.i >= 10);
+      const dup = events.some((o) => o !== e && owner.has(o) && Math.abs(o.t - e.t) < 0.3);
+      if (e.kind !== 'bounce' && (inside || dup)) continue;
+      kept.push(e); continue;
+    }
+    const m = ev3[k];
+    // stesso tocco ma dall'altra parte della rete, o in posizione impossibile, secondo la
+    // ricostruzione 3D (coerente con tutti i voli): si usa la posizione 3D
+    const otherSide = sideOf(m.X) !== sideOf(e.X) && Math.abs(m.X[1] - 9) > 2 && strong(k);
+    if (e.kind === 'touch' && m.kind === 'touch' && (otherSide || (implausible(e.X) && !implausible(m.X) && strong(k)))) kept.push({ ...e, X: m.X, vin: m.vin, vout: m.vout, speedOut: m.speedOut, depth3d: true });
     else kept.push(e);
   }
   for (let k = 0; k < ev3.length; k++) {
     const e = ev3[k];
-    if (near(e.t, events)) continue;
+    if ([...owner.values()].includes(k) || e.t < tMin || e.t > tMax || events.some((o) => Math.abs(o.t - e.t) < 0.3)) continue;
     const A = segs3[k], B = segs3[k + 1];
     const support = A && B && A.j - A.i >= 8 && B.j - B.i >= 6 && e.angle > 30;
     if (support) kept.push({ ...e, conf: Math.min(e.conf, 0.6), added3d: true });
   }
   kept.sort((a, b) => a.t - b.t);
-  // due tocchi a meno di 0,3 s dalla stessa parte: è lo stesso tocco
-  return kept.filter((e, i) => !(i > 0 && e.kind === 'touch' && kept[i - 1].kind === 'touch' && e.t - kept[i - 1].t < 0.3 && sideOf(e.X) === sideOf(kept[i - 1].X)));
+  return kept;
 }
 
 // Modalità 2D: H = omografia immagine(pixel di lavoro) -> metri sul pavimento
